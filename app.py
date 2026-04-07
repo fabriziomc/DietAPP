@@ -562,7 +562,7 @@ def render_prep(plan: WeeklyPlan) -> None:
 
 def clear_planning_state() -> None:
     for session_key in ("strategy_result", "diet_result", "request_payload"):
-        st.session_state.pop(session_key, None)
+        st.session_state[session_key] = None
 
 
 def persist_planning_state(
