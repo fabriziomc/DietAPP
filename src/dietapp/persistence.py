@@ -35,10 +35,10 @@ DEFAULT_PROFILE_VALUES: dict[str, Any] = {
     "max_prep_minutes": 30,
     "leftover_lunches": 3,
     "batch_days": ["Domenica", "Mercoledi"],
-    "cuisines": ["Mediterranea", "Medio Oriente", "Tex-Mex"],
-    "pantry_staples": ["Avena", "Riso", "Pasta", "Legumi in barattolo", "Uova", "Yogurt greco"],
+    "cuisines": ["Italiana", "Mediterranea", "Comfort food leggera"],
+    "pantry_staples": ["Riso", "Pasta", "Farro", "Legumi in barattolo", "Uova", "Pane integrale"],
     "excluded_ingredients": "",
-    "notes": "Preferiamo cene rapide e basi comuni da personalizzare in padella o al forno.",
+    "notes": "Preferiamo ricette italiane semplici, con cene rapide e basi comuni da personalizzare.",
 }
 
 

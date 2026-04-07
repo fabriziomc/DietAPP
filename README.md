@@ -10,7 +10,7 @@ Applicazione web in Python + Streamlit per pianificare la dieta settimanale di u
 - cerca di riusare basi comuni tra versione onnivora e vegetariana
 - privilegia batch cooking, avanzi intelligenti e ingredienti ricorrenti
 - produce una lista della spesa aggregata
-- usa i valori del file `.env` per OpenAI o Groq, altrimenti passa a un generatore locale deterministico
+- usa i valori del file `.env` per OpenAI o Groq, altrimenti passa a un planner locale deterministico con ricette italiane
 - puo salvare localmente il profilo della coppia e ricaricarlo ai successivi avvii
 
 ## Avvio rapido
@@ -37,6 +37,7 @@ Modelli consigliati su Groq per questa app:
 - `llama-3.1-8b-instant`: scelta migliore per velocita e costo ridotto
 
 Se la chiave non e presente, l'app resta comunque utilizzabile tramite il planner locale.
+Il planner locale ora filtra gli ingredienti esclusi, usa davvero budget e cucine preferite per ordinare i template, mantiene le proposte in un perimetro di ricette italiane domestiche e, nei casi piu stretti, prova a sostituire automaticamente gli ingredienti vietati con equivalenti compatibili.
 
 ## Accesso riservato e profili cloud
 

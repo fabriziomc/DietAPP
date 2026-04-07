@@ -46,7 +46,7 @@ def build_request() -> PlanningRequest:
             max_prep_minutes=30,
             leftover_lunches=3,
             batch_days=["Domenica", "Mercoledi"],
-            favorite_cuisines=["Mediterranea", "Tex-Mex"],
+            favorite_cuisines=["Italiana", "Mediterranea"],
             pantry_staples=["Riso", "Pasta", "Legumi in barattolo"],
             excluded_ingredients=["broccoli"],
             notes="Ridurre il numero di pentole usate.",
@@ -231,3 +231,98 @@ def test_ai_plan_normalization_fills_missing_last_day_from_fallback() -> None:
     assert sunday.breakfast.person_one.description != "Versione da rifinire"
     assert sunday.lunch.person_one.ingredients
     assert sunday.dinner.person_two.prep_notes
+
+
+def test_fallback_plan_excludes_blocked_ingredient_aliases() -> None:
+    request = build_request()
+    request.person_two.allergies = ["frutta secca"]
+    request.preferences.excluded_ingredients = ["spinaci"]
+
+    plan = generate_fallback_plan(request)
+    rendered_meals = "\n".join(
+        " ".join(
+            [
+                slot.shared_base,
+                slot.person_one.title,
+                slot.person_one.description,
+                " ".join(slot.person_one.ingredients),
+                slot.person_two.title,
+                slot.person_two.description,
+                " ".join(slot.person_two.ingredients),
+            ]
+        )
+        for day in plan.days
+        for slot in (day.breakfast, day.lunch, day.dinner)
+    ).lower()
+
+    assert "mandorle" not in rendered_meals
+    assert "noci" not in rendered_meals
+    assert "nocciole" not in rendered_meals
+    assert "spinaci" not in rendered_meals
+
+
+def test_fallback_plan_changes_first_dinner_with_budget() -> None:
+    essential_request = build_request()
+    essential_request.preferences.budget = "Essenziale"
+    essential_request.preferences.favorite_cuisines = ["Tradizione regionale"]
+
+    premium_request = build_request()
+    premium_request.preferences.budget = "Premium"
+    premium_request.preferences.favorite_cuisines = ["Tradizione regionale"]
+
+    essential_plan = generate_fallback_plan(essential_request)
+    premium_plan = generate_fallback_plan(premium_request)
+
+    assert "Pasta e lenticchie" in essential_plan.days[0].dinner.shared_base
+    assert "Orzotto" in premium_plan.days[0].dinner.shared_base
+
+
+def test_fallback_plan_changes_first_dinner_with_cuisine_preference() -> None:
+    bowl_request = build_request()
+    bowl_request.preferences.favorite_cuisines = ["Bowl proteiche"]
+
+    regional_request = build_request()
+    regional_request.preferences.favorite_cuisines = ["Tradizione regionale"]
+
+    bowl_plan = generate_fallback_plan(bowl_request)
+    regional_plan = generate_fallback_plan(regional_request)
+
+    assert "Teglia" in bowl_plan.days[0].dinner.shared_base
+    assert "Pasta al forno" in regional_plan.days[0].dinner.shared_base
+
+
+def test_fallback_plan_rewrites_breakfasts_when_constraints_are_too_strict() -> None:
+    request = build_request()
+    request.preferences.excluded_ingredients = [
+        "pane integrale",
+        "ricotta",
+        "yogurt greco",
+        "fette biscottate integrali",
+        "frutta secca",
+    ]
+
+    plan = generate_fallback_plan(request)
+    rendered_breakfasts = "\n".join(
+        " ".join(
+            [
+                day.breakfast.shared_base,
+                day.breakfast.person_one.title,
+                day.breakfast.person_one.description,
+                " ".join(day.breakfast.person_one.ingredients),
+                day.breakfast.person_two.title,
+                day.breakfast.person_two.description,
+                " ".join(day.breakfast.person_two.ingredients),
+            ]
+        )
+        for day in plan.days
+    ).lower()
+
+    assert "pane integrale" not in rendered_breakfasts
+    assert "ricotta" not in rendered_breakfasts
+    assert "yogurt greco" not in rendered_breakfasts
+    assert "fette biscottate integrali" not in rendered_breakfasts
+    assert "mandorle" not in rendered_breakfasts
+    assert "noci" not in rendered_breakfasts
+    assert "nocciole" not in rendered_breakfasts
+    assert any(token in rendered_breakfasts for token in ["gallette di riso", "yogurt di soia", "semi di zucca"])
+    assert any("Sostituzioni automatiche attivate" in note for note in plan.planning_notes)

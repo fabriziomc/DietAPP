@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import copy
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
 from dietapp.config import AppConfig
-from dietapp.defaults import BREAKFAST_TEMPLATES, DAYS, DINNER_BLUEPRINTS
+from dietapp.defaults import BREAKFAST_TEMPLATES, DAYS, DINNER_BLUEPRINTS, LUNCH_BLUEPRINTS
 from dietapp.models import (
     DayPlan,
     HouseholdPreferences,
@@ -38,6 +40,7 @@ PLAN_SYSTEM_PROMPT = """
 You are a meal planning assistant for a couple.
 Return JSON only.
 Design one weekly plan with breakfast, lunch and dinner for 7 days.
+Use recognizable Italian home-style recipes and Italian ingredient combinations unless an explicit constraint prevents it.
 The plan must follow the supplied wellbeing strategy, minimize kitchen work by reusing ingredients, batch cooking and leftovers,
 and keep a shared base meal whenever possible before splitting into omnivore and vegetarian variants.
 Do not include markdown fences.
@@ -52,6 +55,8 @@ KEYWORD_BUCKETS = {
         "ceci",
         "fagioli",
         "lenticchie",
+        "cannellini",
+        "tonno",
         "uova",
         "halloumi",
         "feta",
@@ -60,6 +65,8 @@ KEYWORD_BUCKETS = {
         "parmigiano",
         "yogurt",
         "ricotta",
+        "robiola",
+        "primo sale",
     ],
     "Verdure": [
         "zucchine",
@@ -67,6 +74,7 @@ KEYWORD_BUCKETS = {
         "cipolla",
         "patate",
         "spinaci",
+        "bieta",
         "carote",
         "piselli",
         "lattuga",
@@ -74,9 +82,16 @@ KEYWORD_BUCKETS = {
         "sedano",
         "lime",
         "limone",
+        "melanzane",
+        "funghi",
+        "basilico",
+        "prezzemolo",
         "mela",
         "banana",
         "pera",
+        "kiwi",
+        "albicoc",
+        "fragol",
         "frutti",
     ],
     "Dispensa": [
@@ -85,11 +100,16 @@ KEYWORD_BUCKETS = {
         "tortillas",
         "avena",
         "granola",
+        "farro",
+        "orzo",
+        "gnocchi",
         "pelati",
         "passata",
         "tahina",
         "latte di cocco",
         "pane",
+        "piadina",
+        "fette biscottate",
         "cumino",
         "paprika",
         "olio",
@@ -97,7 +117,81 @@ KEYWORD_BUCKETS = {
         "cannella",
         "semi",
         "miele",
+        "cacao",
+        "confettura",
     ],
+}
+
+
+BUDGET_LEVELS = {"Essenziale": 0, "Bilanciato": 1, "Premium": 2}
+
+BLOCKED_INGREDIENT_ALIASES = {
+    "frutta secca": ["mandorle", "noci", "nocciole"],
+    "frutta a guscio": ["mandorle", "noci", "nocciole"],
+    "latticini": ["ricotta", "mozzarella", "parmigiano", "yogurt", "robiola", "primo sale"],
+    "latte": ["ricotta", "mozzarella", "parmigiano", "yogurt", "robiola", "primo sale"],
+    "lattosio": ["ricotta", "mozzarella", "parmigiano", "yogurt", "robiola", "primo sale"],
+    "legumi": ["ceci", "lenticchie", "cannellini", "fagioli"],
+    "uova": ["uova", "frittata", "tortino"],
+    "glutine": ["pasta", "pane", "farro", "orzo", "piadina", "gnocchi", "fette biscottate"],
+    "carne": ["pollo", "tacchino", "ragu di tacchino"],
+    "pesce": ["tonno"],
+}
+
+INGREDIENT_BUDGET_HINTS = {
+    "uova sode": "Essenziale",
+    "uova": "Essenziale",
+    "ceci": "Essenziale",
+    "cannellini": "Essenziale",
+    "tonno al naturale": "Bilanciato",
+    "ricotta": "Bilanciato",
+    "primo sale": "Bilanciato",
+    "tacchino arrosto": "Bilanciato",
+    "pollo arrosto": "Bilanciato",
+    "mozzarella": "Premium",
+    "robiola": "Premium",
+    "ricotta salata": "Premium",
+    "pollo alla piastra": "Premium",
+}
+
+INGREDIENT_SUBSTITUTIONS = {
+    "petto di pollo": ["uova", "ceci", "cannellini"],
+    "pollo alla piastra": ["uova sode", "ceci", "cannellini"],
+    "pollo arrosto": ["uova sode", "ceci", "cannellini"],
+    "pollo": ["uova", "ceci", "cannellini"],
+    "macinato di tacchino": ["lenticchie", "cannellini", "uova"],
+    "tacchino arrosto": ["uova sode", "ceci", "cannellini"],
+    "tacchino": ["uova", "lenticchie", "cannellini"],
+    "ragu di tacchino": ["ragu di lenticchie", "cannellini al pomodoro"],
+    "tonno al naturale": ["uova sode", "ceci", "cannellini"],
+    "uova sode": ["ceci", "cannellini", "primo sale"],
+    "uova": ["ceci", "cannellini", "primo sale"],
+    "ricotta salata": ["primo sale", "ceci al basilico", "crema di semi di girasole"],
+    "ricotta": ["yogurt di soia", "crema di semi di girasole", "cannellini al limone"],
+    "yogurt greco": ["yogurt di soia", "crema di semi di girasole"],
+    "mozzarella": ["primo sale", "ceci al basilico", "cannellini al basilico"],
+    "parmigiano": ["pangrattato alle erbe", "semi di zucca"],
+    "primo sale": ["ricotta", "ceci al basilico", "crema di semi di girasole"],
+    "robiola": ["ricotta", "crema di semi di girasole", "cannellini al limone"],
+    "mandorle": ["semi di zucca", "semi di girasole"],
+    "noci": ["semi di zucca", "semi di girasole"],
+    "nocciole": ["semi di zucca", "semi di girasole"],
+    "spinaci": ["bieta", "zucchine grigliate"],
+    "bieta": ["zucchine grigliate", "carote"],
+    "melanzane grigliate": ["zucchine grigliate", "funghi"],
+    "funghi": ["zucchine grigliate", "carote"],
+    "ceci": ["cannellini", "uova sode", "primo sale"],
+    "cannellini": ["ceci", "uova sode", "primo sale"],
+    "lenticchie": ["cannellini", "uova", "primo sale"],
+    "pane integrale": ["gallette di riso", "polenta grigliata"],
+    "pane casereccio": ["gallette di riso", "polenta grigliata"],
+    "fette biscottate integrali": ["gallette di riso", "yogurt di soia con frutta"],
+    "piadina integrale": ["gallette di riso salate", "riso"],
+    "pasta corta": ["riso", "patate al forno"],
+    "pasta": ["riso", "patate al forno"],
+    "gnocchi": ["riso", "patate al forno"],
+    "farro": ["riso", "patate lesse"],
+    "orzo": ["riso", "patate lesse"],
 }
 
 
@@ -273,17 +367,56 @@ def generate_fallback_plan(
     days: list[DayPlan] = []
     prep_tasks = _build_prep_tasks(request, resolved_strategy)
     planning_notes = _build_planning_notes(request, resolved_strategy)
+    substitution_notes: list[str] = []
+    blocked_terms = _collect_blocked_terms(request)
+    cuisine_preferences = _effective_cuisine_preferences(request)
+    budget_label = _normalize_budget_label(request.preferences.budget)
+
+    breakfast_templates = _prioritize_templates(
+        BREAKFAST_TEMPLATES,
+        request,
+        blocked_terms,
+        cuisine_preferences,
+        budget_label,
+    )
+    lunch_blueprints = _prioritize_templates(
+        LUNCH_BLUEPRINTS,
+        request,
+        blocked_terms,
+        cuisine_preferences,
+        budget_label,
+    )
+    dinner_templates = _prioritize_templates(
+        DINNER_BLUEPRINTS,
+        request,
+        blocked_terms,
+        cuisine_preferences,
+        budget_label,
+    )
 
     leftover_indexes = {1, 3, 4, 6}
     leftover_indexes = set(sorted(leftover_indexes)[: request.preferences.leftover_lunches])
 
     for index, day_name in enumerate(DAYS):
-        breakfast_template = BREAKFAST_TEMPLATES[index % len(BREAKFAST_TEMPLATES)]
-        dinner_template = DINNER_BLUEPRINTS[index % len(DINNER_BLUEPRINTS)]
+        breakfast_template = breakfast_templates[index % len(breakfast_templates)]
+        dinner_template = dinner_templates[index % len(dinner_templates)]
+        leftover_template = dinner_templates[(index - 1) % len(dinner_templates)]
+        lunch_blueprint = lunch_blueprints[index % len(lunch_blueprints)]
 
         breakfast = _make_breakfast_slot(breakfast_template, request)
-        lunch = _make_lunch_slot(index, request, dinner_template, index in leftover_indexes)
+        lunch = _make_lunch_slot(
+            index,
+            request,
+            leftover_template,
+            lunch_blueprint,
+            blocked_terms,
+            index in leftover_indexes,
+        )
         dinner = _make_dinner_slot(dinner_template, request)
+
+        _collect_template_substitution_note(substitution_notes, breakfast_template)
+        _collect_template_substitution_note(substitution_notes, lunch_blueprint)
+        _collect_template_substitution_note(substitution_notes, dinner_template)
 
         _merge_shopping(shopping_map, breakfast_template.get("shopping", {}))
         _merge_shopping(shopping_map, dinner_template.get("shopping", {}))
@@ -300,6 +433,12 @@ def generate_fallback_plan(
 
     shopping_list = {category: sorted(items) for category, items in shopping_map.items()}
     strategy_text = _build_plan_strategy(request, resolved_strategy)
+    if substitution_notes:
+        planning_notes.append(
+            "Sostituzioni automatiche attivate per rispettare i vincoli piu stretti: "
+            + "; ".join(substitution_notes[:4])
+            + "."
+        )
     return WeeklyPlan(
         title="Piano settimanale guidato dalla strategia benessere",
         strategy=strategy_text,
@@ -413,10 +552,12 @@ Strategia benessere approvata:
 Regole:
 - La strategia sopra e il punto di partenza: i pasti devono rispettare focus, target derivati e linee guida di ciascuna persona.
 - Genera sempre 7 giorni, da Lunedi a Domenica.
+- Le ricette devono essere concrete e riconoscibili come cucina italiana domestica o tradizione regionale italiana alleggerita.
 - Minimizza il lavoro in cucina con basi comuni, batch cooking, ingredienti ripetuti e avanzi intelligenti.
 - Usa gli stessi nomi presenti nel payload per person_one e person_two.
 - Mantieni le cene entro il tempo massimo richiesto quando possibile.
 - Evita ingredienti esclusi, allergie e cibi non graditi.
+- Usa budget e cucine preferite per orientare la scelta degli ingredienti, ma resta in un perimetro di ricette italiane.
 - La lista della spesa deve essere aggregata per categoria.
 
 Restituisci JSON con questo schema esatto:
@@ -807,7 +948,7 @@ def _make_breakfast_slot(template: dict[str, Any], request: PlanningRequest) -> 
             ingredients=list(template["ingredients"]),
             prep_notes=template["prep_notes"],
         ),
-        prep_minutes=8,
+        prep_minutes=int(template.get("prep_minutes", 8)),
         leftover_friendly=False,
         reuse_from_previous="Ruota 2-3 basi per evitare decision fatigue la mattina.",
         kitchen_load="Molto basso",
@@ -817,57 +958,74 @@ def _make_breakfast_slot(template: dict[str, Any], request: PlanningRequest) -> 
 def _make_lunch_slot(
     index: int,
     request: PlanningRequest,
-    dinner_template: dict[str, Any],
+    leftover_template: dict[str, Any],
+    lunch_blueprint: dict[str, Any],
+    blocked_terms: set[str],
     use_leftovers: bool,
 ) -> MealSlot:
     if use_leftovers:
+        person_one_leftover = _variant_for_person(leftover_template, request.person_one.dietary_style)
+        person_two_leftover = _variant_for_person(leftover_template, request.person_two.dietary_style)
         return MealSlot(
-            shared_base=f"Lunch box con base avanzata da {dinner_template['name'].lower()}",
+            shared_base=f"Lunch box con base avanzata da {leftover_template['name'].lower()}",
             person_one=MealVariant(
-                title=f"Leftover box {request.person_one.dietary_style.lower()}",
+                title=f"Lunch box da {person_one_leftover['title']}",
                 description="Pranzo costruito sugli avanzi della cena per abbattere tempi e sprechi.",
-                ingredients=_variant_for_person(dinner_template, request.person_one.dietary_style)["ingredients"],
+                ingredients=list(person_one_leftover["ingredients"]),
                 prep_notes="Porziona la sera stessa in contenitore ermetico.",
             ),
             person_two=MealVariant(
-                title=f"Leftover box {request.person_two.dietary_style.lower()}",
+                title=f"Lunch box da {person_two_leftover['title']}",
                 description="Stessa base con variante proteica gia pronta dal giorno prima.",
-                ingredients=_variant_for_person(dinner_template, request.person_two.dietary_style)["ingredients"],
+                ingredients=list(person_two_leftover["ingredients"]),
                 prep_notes="Aggiungi foglie fresche o yogurt solo al momento.",
             ),
             prep_minutes=6,
             leftover_friendly=True,
-            reuse_from_previous=dinner_template["reuse_from_previous"],
+            reuse_from_previous=leftover_template["reuse_from_previous"],
             kitchen_load="Molto basso",
         )
 
-    lunch_shared_base = "Bowl fredda ad alta sazieta con cereale, ortaggi croccanti e dressing rapido"
-    pantry_seed = request.preferences.pantry_staples[:3] or ["riso", "farro", "legumi"]
-    person_one_title = "Bowl proteica con uova e dressing allo yogurt"
-    person_two_title = "Bowl proteica con ceci e feta"
-    if index % 2 == 1:
-        lunch_shared_base = "Piadina ripiena con verdure, salsa cremosa e frutta di fianco"
-        person_one_title = "Wrap con hummus, uova e insalata"
-        person_two_title = "Wrap con hummus, feta e insalata"
+    grain = _select_lunch_grain(lunch_blueprint, request, blocked_terms, index)
+    person_one_protein = _select_lunch_protein(
+        lunch_blueprint,
+        request.person_one.dietary_style,
+        request.preferences.budget,
+        blocked_terms,
+        index,
+    )
+    person_two_protein = _select_lunch_protein(
+        lunch_blueprint,
+        request.person_two.dietary_style,
+        request.preferences.budget,
+        blocked_terms,
+        index + 1,
+    )
 
-    ingredients = pantry_seed + ["verdure crude", "salsa yogurt", "frutta"]
+    person_one_title = _render_lunch_text(lunch_blueprint["title_template"], grain, person_one_protein)
+    person_two_title = _render_lunch_text(lunch_blueprint["title_template"], grain, person_two_protein)
+    shared_base = _render_lunch_text(lunch_blueprint["shared_base"], grain, person_one_protein)
+
+    person_one_ingredients = _build_lunch_ingredients(lunch_blueprint, grain, person_one_protein)
+    person_two_ingredients = _build_lunch_ingredients(lunch_blueprint, grain, person_two_protein)
+
     return MealSlot(
-        shared_base=lunch_shared_base,
+        shared_base=shared_base,
         person_one=MealVariant(
             title=person_one_title,
-            description="Pranzo rapido da assemblare in meno di 10 minuti.",
-            ingredients=ingredients + ["uova sode"],
-            prep_notes="Usa componenti gia porzionati in frigo.",
+            description=_lunch_description_for_style(lunch_blueprint, request.person_one.dietary_style),
+            ingredients=person_one_ingredients,
+            prep_notes=str(lunch_blueprint["prep_notes"]),
         ),
         person_two=MealVariant(
             title=person_two_title,
-            description="Versione vegetariana con stesso assetto e stessi contorni.",
-            ingredients=ingredients + ["ceci", "feta"],
-            prep_notes="Prepara 2 lunch box in parallelo quando fai batch cooking.",
+            description=_lunch_description_for_style(lunch_blueprint, request.person_two.dietary_style),
+            ingredients=person_two_ingredients,
+            prep_notes=str(lunch_blueprint["prep_notes"]),
         ),
-        prep_minutes=10,
+        prep_minutes=int(lunch_blueprint.get("prep_minutes", 10)),
         leftover_friendly=False,
-        reuse_from_previous="Slot flessibile per smaltire verdure crude, salse e cereali della settimana.",
+        reuse_from_previous="Usa cereali, verdure e condimenti preparati nei giorni di batch cooking.",
         kitchen_load="Basso",
     )
 
@@ -950,10 +1108,10 @@ def _normalize_shopping_list(raw: Any) -> dict[str, list[str]]:
 
 def _build_plan_strategy(request: PlanningRequest, strategy: WellnessStrategy) -> str:
     batch_days = ", ".join(request.preferences.batch_days) or "nessun giorno fisso"
-    favorite_cuisines = ", ".join(request.preferences.favorite_cuisines) or "stile bilanciato"
+    favorite_cuisines = ", ".join(_effective_cuisine_preferences(request)) or "stile bilanciato"
     return (
         f"{strategy.couple_summary} In cucina la settimana privilegia basi condivise, due momenti di prep ({batch_days}), "
-        f"cene entro {request.preferences.max_prep_minutes} minuti e sapori ispirati a {favorite_cuisines}."
+        f"cene entro {request.preferences.max_prep_minutes} minuti e ricette italiane orientate verso {favorite_cuisines}."
     )
 
 
@@ -973,6 +1131,7 @@ def _build_planning_notes(request: PlanningRequest, strategy: WellnessStrategy) 
         f"{request.person_one.name}: {strategy.person_one.focus} | target stimato {strategy.person_one.daily_kcal_target} kcal e {strategy.person_one.protein_target_g} g proteine.",
         f"{request.person_two.name}: {strategy.person_two.focus} | target stimato {strategy.person_two.daily_kcal_target} kcal e {strategy.person_two.protein_target_g} g proteine.",
         f"Budget impostato: {request.preferences.budget}.",
+        "Il planner locale usa ricette italiane domestiche e adatta le scelte in base a budget e cucine preferite.",
         "Le cene sono costruite per condividere contorni, dressing e basi amidacee senza duplicare il lavoro.",
     ]
     if request.preferences.excluded_ingredients:
@@ -1028,3 +1187,350 @@ def _coerce_optional_int(raw: Any, default: int | None) -> int | None:
 
 def _round_to_step(value: float, step: int) -> int:
     return int(step * round(float(value) / step))
+
+
+def _normalize_text_token(value: str) -> str:
+    return " ".join(str(value).strip().lower().replace("/", " ").replace(",", " ").split())
+
+
+def _normalize_budget_label(raw_budget: str) -> str:
+    normalized = str(raw_budget).strip().capitalize()
+    if normalized in BUDGET_LEVELS:
+        return normalized
+    return "Bilanciato"
+
+
+def _effective_cuisine_preferences(request: PlanningRequest) -> list[str]:
+    preferences = ["Italiana"]
+    preferences.extend(request.preferences.favorite_cuisines)
+    unique_preferences: list[str] = []
+    seen: set[str] = set()
+    for cuisine in preferences:
+        cleaned = str(cuisine).strip()
+        if not cleaned:
+            continue
+        token = _normalize_text_token(cleaned)
+        if token in seen:
+            continue
+        seen.add(token)
+        unique_preferences.append(cleaned)
+    return unique_preferences
+
+
+def _collect_blocked_terms(request: PlanningRequest) -> set[str]:
+    raw_terms = list(request.preferences.excluded_ingredients)
+    for person in (request.person_one, request.person_two):
+        raw_terms.extend(person.dislikes)
+        raw_terms.extend(person.allergies)
+
+    blocked_terms: set[str] = set()
+    for term in raw_terms:
+        cleaned = _normalize_text_token(term)
+        if not cleaned:
+            continue
+        blocked_terms.add(cleaned)
+        for alias in BLOCKED_INGREDIENT_ALIASES.get(cleaned, []):
+            blocked_terms.add(_normalize_text_token(alias))
+    return blocked_terms
+
+
+def _template_conflicts_with_terms(template: dict[str, Any], blocked_terms: set[str]) -> bool:
+    if not blocked_terms:
+        return False
+    for text in _iter_template_texts(template):
+        lowered_text = _normalize_text_token(text)
+        if any(term in lowered_text for term in blocked_terms):
+            return True
+    return False
+
+
+def _iter_template_texts(template: dict[str, Any]) -> list[str]:
+    texts: list[str] = []
+    for key, value in template.items():
+        if str(key).startswith("_"):
+            continue
+        texts.extend(_flatten_text_values(value))
+    return texts
+
+
+def _flatten_text_values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        texts: list[str] = []
+        for item in value:
+            texts.extend(_flatten_text_values(item))
+        return texts
+    if isinstance(value, dict):
+        texts: list[str] = []
+        for nested_value in value.values():
+            texts.extend(_flatten_text_values(nested_value))
+        return texts
+    return [str(value)]
+
+
+def _prioritize_templates(
+    templates: list[dict[str, Any]],
+    request: PlanningRequest,
+    blocked_terms: set[str],
+    cuisine_preferences: list[str],
+    budget_label: str,
+) -> list[dict[str, Any]]:
+    compatible_templates = [
+        template for template in templates if not _template_conflicts_with_terms(template, blocked_terms)
+    ]
+    if not compatible_templates and blocked_terms:
+        compatible_templates = _adapt_templates_for_blocked_terms(templates, blocked_terms)
+    if not compatible_templates:
+        compatible_templates = list(templates)
+
+    pantry_tokens = {_normalize_text_token(item) for item in request.preferences.pantry_staples}
+    return sorted(
+        compatible_templates,
+        key=lambda template: (
+            -_template_priority_score(template, request, cuisine_preferences, budget_label, pantry_tokens),
+            str(template.get("name") or template.get("shared_base") or ""),
+        ),
+    )
+
+
+def _template_priority_score(
+    template: dict[str, Any],
+    request: PlanningRequest,
+    cuisine_preferences: list[str],
+    budget_label: str,
+    pantry_tokens: set[str],
+) -> int:
+    score = 0
+    template_budget = _normalize_budget_label(str(template.get("budget_tier") or budget_label))
+    score += max(0, 5 - (abs(BUDGET_LEVELS[template_budget] - BUDGET_LEVELS[budget_label]) * 2))
+
+    template_cuisines = {
+        _normalize_text_token(cuisine) for cuisine in _to_string_list(template.get("cuisines"))
+    }
+    for index, cuisine in enumerate(cuisine_preferences):
+        if _normalize_text_token(cuisine) in template_cuisines:
+            score += max(5 - index, 1) * 2
+    if "italiana" in template_cuisines:
+        score += 4
+
+    prep_minutes = _coerce_int(template.get("prep_minutes"), request.preferences.max_prep_minutes)
+    if prep_minutes <= request.preferences.max_prep_minutes:
+        score += 3
+    else:
+        score -= max(1, prep_minutes - request.preferences.max_prep_minutes)
+
+    if template.get("leftover_friendly") and request.preferences.leftover_lunches:
+        score += 2
+
+    template_tokens = {_normalize_text_token(token) for token in _iter_template_texts(template)}
+    if pantry_tokens and any(token in joined_template_token for token in pantry_tokens for joined_template_token in template_tokens):
+        score += 2
+
+    if template.get("_is_substituted"):
+        score -= 2
+
+    return score
+
+
+def _select_lunch_grain(
+    lunch_blueprint: dict[str, Any],
+    request: PlanningRequest,
+    blocked_terms: set[str],
+    rotation_index: int,
+) -> str:
+    grain_options = _to_string_list(lunch_blueprint.get("grain_options"))
+    if not grain_options:
+        return ""
+
+    pantry_tokens = {_normalize_text_token(item) for item in request.preferences.pantry_staples}
+    compatible_options = [
+        option for option in grain_options if _normalize_text_token(option) not in blocked_terms
+    ]
+    if not compatible_options:
+        compatible_options = list(grain_options)
+
+    ranked_options = sorted(
+        compatible_options,
+        key=lambda option: (
+            0 if _normalize_text_token(option) in pantry_tokens else 1,
+            option,
+        ),
+    )
+    return ranked_options[rotation_index % len(ranked_options)]
+
+
+def _select_lunch_protein(
+    lunch_blueprint: dict[str, Any],
+    dietary_style: str,
+    budget_label: str,
+    blocked_terms: set[str],
+    rotation_index: int,
+) -> str:
+    option_key = "vegetarian_options" if dietary_style.strip().lower() == "vegetariano" else "omnivore_options"
+    protein_options = _to_string_list(lunch_blueprint.get(option_key))
+    compatible_options = [
+        option for option in protein_options if _normalize_text_token(option) not in blocked_terms
+    ]
+    if not compatible_options:
+        compatible_options = list(protein_options)
+
+    resolved_budget = _normalize_budget_label(budget_label)
+    ranked_options = sorted(
+        compatible_options,
+        key=lambda option: (
+            abs(
+                BUDGET_LEVELS[_normalize_budget_label(INGREDIENT_BUDGET_HINTS.get(option, resolved_budget))]
+                - BUDGET_LEVELS[resolved_budget]
+            ),
+            option,
+        ),
+    )
+    return ranked_options[rotation_index % len(ranked_options)]
+
+
+def _render_lunch_text(template_text: str, grain: str, protein: str) -> str:
+    return template_text.format(grain=grain, protein=protein).replace("  ", " ").strip()
+
+
+def _build_lunch_ingredients(
+    lunch_blueprint: dict[str, Any],
+    grain: str,
+    protein: str,
+) -> list[str]:
+    ingredients = []
+    if grain:
+        ingredients.append(grain)
+    ingredients.extend(_to_string_list(lunch_blueprint.get("base_ingredients")))
+    if protein:
+        ingredients.append(protein)
+    return ingredients
+
+
+def _lunch_description_for_style(lunch_blueprint: dict[str, Any], dietary_style: str) -> str:
+    if dietary_style.strip().lower() == "vegetariano":
+        return str(lunch_blueprint.get("vegetarian_description") or lunch_blueprint.get("omnivore_description") or "")
+    return str(lunch_blueprint.get("omnivore_description") or lunch_blueprint.get("vegetarian_description") or "")
+
+
+def _collect_template_substitution_note(substitution_notes: list[str], template: dict[str, Any]) -> None:
+    note = str(template.get("_substitution_summary") or "").strip()
+    if note and note not in substitution_notes:
+        substitution_notes.append(note)
+
+
+def _adapt_templates_for_blocked_terms(
+    templates: list[dict[str, Any]],
+    blocked_terms: set[str],
+) -> list[dict[str, Any]]:
+    adapted_templates: list[dict[str, Any]] = []
+    for template in templates:
+        adapted_template = _adapt_template_for_blocked_terms(template, blocked_terms)
+        if adapted_template is not None:
+            adapted_templates.append(adapted_template)
+    return adapted_templates
+
+
+def _adapt_template_for_blocked_terms(
+    template: dict[str, Any],
+    blocked_terms: set[str],
+) -> dict[str, Any] | None:
+    adapted_template = copy.deepcopy(template)
+    applied_replacements: list[tuple[str, str]] = []
+    adapted_template = _adapt_template_value(adapted_template, blocked_terms, applied_replacements)
+    if _template_conflicts_with_terms(adapted_template, blocked_terms):
+        return None
+    if not applied_replacements:
+        return None
+
+    unique_replacements: list[tuple[str, str]] = []
+    seen_pairs: set[tuple[str, str]] = set()
+    for source, target in applied_replacements:
+        pair = (_normalize_text_token(source), _normalize_text_token(target))
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        unique_replacements.append((source, target))
+
+    adapted_template["_is_substituted"] = True
+    adapted_template["_substitution_summary"] = ", ".join(
+        f"{source} -> {target}" for source, target in unique_replacements[:3]
+    )
+    return adapted_template
+
+
+def _adapt_template_value(
+    value: Any,
+    blocked_terms: set[str],
+    applied_replacements: list[tuple[str, str]],
+) -> Any:
+    if isinstance(value, str):
+        return _adapt_template_text(value, blocked_terms, applied_replacements)
+    if isinstance(value, list):
+        return [
+            _adapt_template_value(item, blocked_terms, applied_replacements)
+            for item in value
+        ]
+    if isinstance(value, dict):
+        adapted_mapping: dict[str, Any] = {}
+        for key, nested_value in value.items():
+            adapted_mapping[key] = _adapt_template_value(nested_value, blocked_terms, applied_replacements)
+        return adapted_mapping
+    return value
+
+
+def _adapt_template_text(
+    text: str,
+    blocked_terms: set[str],
+    applied_replacements: list[tuple[str, str]],
+) -> str:
+    adapted_text = text
+    for source_token in sorted(INGREDIENT_SUBSTITUTIONS, key=len, reverse=True):
+        if not _source_token_is_blocked(source_token, blocked_terms):
+            continue
+        if _normalize_text_token(source_token) not in _normalize_text_token(adapted_text):
+            continue
+        replacement = _choose_replacement_for_token(source_token, blocked_terms)
+        if not replacement:
+            continue
+        updated_text = _replace_case_insensitive(adapted_text, source_token, replacement)
+        if updated_text != adapted_text:
+            adapted_text = updated_text
+            applied_replacements.append((source_token, replacement))
+    return adapted_text
+
+
+def _source_token_is_blocked(source_token: str, blocked_terms: set[str]) -> bool:
+    normalized_source = _normalize_text_token(source_token)
+    return any(
+        blocked_term == normalized_source
+        or blocked_term in normalized_source
+        or normalized_source in blocked_term
+        for blocked_term in blocked_terms
+    )
+
+
+def _choose_replacement_for_token(source_token: str, blocked_terms: set[str]) -> str | None:
+    for replacement in INGREDIENT_SUBSTITUTIONS.get(source_token, []):
+        if not _string_conflicts_with_terms(replacement, blocked_terms):
+            return replacement
+    return None
+
+
+def _string_conflicts_with_terms(text: str, blocked_terms: set[str]) -> bool:
+    normalized_text = _normalize_text_token(text)
+    return any(blocked_term in normalized_text for blocked_term in blocked_terms)
+
+
+def _replace_case_insensitive(text: str, source_token: str, replacement: str) -> str:
+    pattern = re.compile(re.escape(source_token), re.IGNORECASE)
+
+    def replace_match(match: re.Match[str]) -> str:
+        matched_text = match.group(0)
+        if matched_text[:1].isupper():
+            return replacement[:1].upper() + replacement[1:]
+        return replacement
+
+    return pattern.sub(replace_match, text)
