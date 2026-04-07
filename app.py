@@ -14,11 +14,29 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from dietapp.auth import (
+    AuthSession,
+    request_password_reset,
+    restore_user_session,
+    sign_in_user,
+    sign_out_user,
+    update_user_password,
+    verify_auth_link,
+)
 from dietapp.config import AppConfig
 from dietapp.defaults import CUISINE_OPTIONS, PANTRY_OPTIONS
 from dietapp.formatters import compute_plan_metrics, plan_to_markdown
 from dietapp.models import HouseholdPreferences, PersonProfile, PlanningRequest, WeeklyPlan, WellnessStrategy
-from dietapp.persistence import load_profile_form_values, save_profile_form_values
+from dietapp.persistence import (
+    DEFAULT_PROFILE_VALUES,
+    clear_planning_state_from_supabase,
+    load_planning_state_from_supabase,
+    load_profile_form_values,
+    load_profile_form_values_from_supabase,
+    save_planning_state_to_supabase,
+    save_profile_form_values,
+    save_profile_form_values_to_supabase,
+)
 from dietapp.planner import DietResult, StrategyResult, generate_diet_from_strategy, generate_wellness_strategy
 
 
@@ -352,6 +370,10 @@ def build_source_label(strategy_source: str, diet_source: str) -> str:
     return f"Strategia {strategy_source} | Dieta {diet_source}"
 
 
+def same_request_payload(left: PlanningRequest | None, right: PlanningRequest) -> bool:
+    return left is not None and left.to_dict() == right.to_dict()
+
+
 def render_metric(label: str, value: str, caption: str) -> None:
     st.markdown(
         dedent(
@@ -538,7 +560,211 @@ def render_prep(plan: WeeklyPlan) -> None:
     )
 
 
+def clear_planning_state() -> None:
+    for session_key in ("strategy_result", "diet_result", "request_payload"):
+        st.session_state.pop(session_key, None)
+
+
+def persist_planning_state(
+    config: AppConfig,
+    auth_client,
+    auth_session: AuthSession | None,
+    request_payload: PlanningRequest | None,
+    strategy_result: StrategyResult | None,
+    diet_result: DietResult | None,
+) -> None:
+    if auth_session is None or auth_client is None or request_payload is None or strategy_result is None:
+        return
+
+    save_planning_state_to_supabase(
+        request_payload,
+        strategy_result,
+        diet_result,
+        auth_client,
+        auth_session.user_id,
+        config.supabase_profile_table,
+    )
+
+
+def consume_auth_link(config: AppConfig) -> None:
+    token_hash = str(st.query_params.get("token_hash") or "").strip()
+    auth_type = str(st.query_params.get("type") or "").strip()
+    if not token_hash or not auth_type:
+        return
+
+    try:
+        _, recovered_session = verify_auth_link(config, token_hash, auth_type)
+    except Exception as exc:
+        st.session_state.auth_feedback = (
+            "error",
+            f"Link di accesso o recupero non valido: {exc}",
+        )
+    else:
+        st.session_state.auth_session = recovered_session.to_dict()
+        st.session_state.password_reset_pending = auth_type == "recovery"
+        st.session_state.planning_state_user_id = None
+        clear_planning_state()
+        if auth_type == "recovery":
+            st.session_state.auth_feedback = (
+                "success",
+                "Link di recupero verificato. Imposta ora una nuova password.",
+            )
+
+    st.query_params.clear()
+    st.rerun()
+
+
+def render_auth_gate(config: AppConfig):
+    consume_auth_link(config)
+
+    current_auth_session: AuthSession | None = None
+    current_auth_client = None
+
+    feedback = st.session_state.pop("auth_feedback", None)
+    if isinstance(feedback, tuple) and len(feedback) == 2:
+        level, message = feedback
+        getattr(st, level, st.info)(message)
+
+    if st.session_state.get("auth_session"):
+        try:
+            current_auth_client, current_auth_session = restore_user_session(
+                config,
+                st.session_state.auth_session,
+            )
+        except Exception:
+            st.session_state.auth_session = None
+            st.session_state.planning_state_user_id = None
+            st.session_state.password_reset_pending = False
+            clear_planning_state()
+            st.warning("La sessione e scaduta oppure non e piu valida. Effettua di nuovo il login.")
+
+    st.markdown("<div class='section-label'>Accesso riservato</div>", unsafe_allow_html=True)
+
+    if current_auth_session is not None:
+        identity_col, action_col = st.columns([1.8, 1])
+        with identity_col:
+            st.success(
+                f"Accesso attivo come {current_auth_session.email or current_auth_session.user_id}. Profilo, strategia e piano vengono salvati nel cloud per questo account."
+            )
+        with action_col:
+            if st.button("Esci", use_container_width=True):
+                try:
+                    sign_out_user(config, st.session_state.auth_session)
+                except Exception:
+                    pass
+                st.session_state.auth_session = None
+                st.session_state.planning_state_user_id = None
+                st.session_state.password_reset_pending = False
+                clear_planning_state()
+                st.rerun()
+
+        if st.session_state.get("password_reset_pending"):
+            st.warning(
+                "Recupero password in corso: scegli una nuova password per completare il reset del tuo account."
+            )
+            with st.form("password-recovery-form", clear_on_submit=True):
+                new_password = st.text_input("Nuova password", type="password")
+                confirm_password = st.text_input("Conferma nuova password", type="password")
+                update_password_clicked = st.form_submit_button(
+                    "Aggiorna password",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            if update_password_clicked:
+                if len(new_password.strip()) < 8:
+                    st.error("La nuova password deve avere almeno 8 caratteri.")
+                elif new_password != confirm_password:
+                    st.error("Le due password non coincidono.")
+                else:
+                    try:
+                        update_user_password(config, st.session_state.auth_session, new_password)
+                    except Exception as exc:
+                        st.error(f"Aggiornamento password non riuscito: {exc}")
+                    else:
+                        st.session_state.password_reset_pending = False
+                        st.session_state.auth_feedback = (
+                            "success",
+                            "Password aggiornata correttamente.",
+                        )
+                        st.rerun()
+
+        return current_auth_client, current_auth_session
+
+    st.info(
+        "Questa istanza usa Supabase Auth. Mantieni l'app privata creando gli utenti manualmente nel dashboard Supabase, senza signup pubblico."
+    )
+    with st.form("login-form", clear_on_submit=False):
+        login_email = st.text_input("Email", placeholder="nome@esempio.com")
+        login_password = st.text_input("Password", type="password")
+        login_clicked = st.form_submit_button(
+            "Entra",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if login_clicked:
+        try:
+            _, authenticated_session = sign_in_user(config, login_email, login_password)
+        except Exception as exc:
+            st.error(
+                f"Accesso non riuscito: {exc}. Verifica credenziali, utente attivato in Supabase e secrets configurati."
+            )
+        else:
+            st.session_state.auth_session = authenticated_session.to_dict()
+            st.session_state.planning_state_user_id = None
+            st.session_state.password_reset_pending = False
+            clear_planning_state()
+            st.rerun()
+
+    with st.form("forgot-password-form", clear_on_submit=False):
+        recovery_email = st.text_input(
+            "Email per recupero password",
+            placeholder="nome@esempio.com",
+        )
+        recovery_clicked = st.form_submit_button(
+            "Invia email di reset",
+            use_container_width=True,
+        )
+
+    if recovery_clicked:
+        try:
+            request_password_reset(config, recovery_email)
+        except Exception as exc:
+            st.error(f"Invio email di reset non riuscito: {exc}")
+        else:
+            st.success(
+                "Email di reset inviata. Apri il link ricevuto e poi imposta la nuova password direttamente nell'app."
+            )
+
+    st.caption(
+        "La registrazione pubblica non e esposta nell'app. Crea gli utenti da Supabase Auth > Users, configura il recovery template e poi usa qui email e password."
+    )
+    st.stop()
+
+
 inject_styles()
+
+if "auth_session" not in st.session_state:
+    st.session_state.auth_session = None
+
+if "strategy_result" not in st.session_state:
+    st.session_state.strategy_result = None
+
+if "diet_result" not in st.session_state:
+    st.session_state.diet_result = None
+
+if "request_payload" not in st.session_state:
+    st.session_state.request_payload = None
+
+if "password_reset_pending" not in st.session_state:
+    st.session_state.password_reset_pending = False
+
+if "planning_state_user_id" not in st.session_state:
+    st.session_state.planning_state_user_id = None
+
+if "auth_feedback" not in st.session_state:
+    st.session_state.auth_feedback = None
 
 st.markdown(
     dedent(
@@ -556,17 +782,28 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-if "strategy_result" not in st.session_state:
-    st.session_state.strategy_result = None
-
-if "diet_result" not in st.session_state:
-    st.session_state.diet_result = None
-
-if "request_payload" not in st.session_state:
-    st.session_state.request_payload = None
-
 base_config = AppConfig.from_env()
+auth_client = None
+auth_session: AuthSession | None = None
+
+if base_config.has_supabase():
+    auth_client, auth_session = render_auth_gate(base_config)
+
 form_defaults = load_profile_form_values()
+profile_storage_label = "locale"
+if auth_session is not None and auth_client is not None:
+    try:
+        form_defaults = load_profile_form_values_from_supabase(
+            auth_client,
+            auth_session.user_id,
+            base_config.supabase_profile_table,
+        )
+        profile_storage_label = "cloud personale"
+    except Exception:
+        form_defaults = dict(DEFAULT_PROFILE_VALUES)
+        st.warning(
+            "Non riesco a leggere il profilo salvato su Supabase. Controlla tabella, policy RLS e secrets."
+        )
 style_options = ["Onnivoro", "Vegetariano"]
 sex_options = ["Uomo", "Donna", "Altro / Non specificato"]
 budget_options = ["Essenziale", "Bilanciato", "Premium"]
@@ -580,8 +817,13 @@ if base_config.get_api_key():
 else:
     st.info("Nessuna chiave AI valida trovata nel file .env: usero il planner locale.")
 st.caption(
-    "Il profilo della coppia si salva in locale. Eta, sesso, altezza, peso e attivita guidano prima la strategia benessere e poi il piano alimentare."
+    f"Il profilo della coppia si salva in {profile_storage_label}. Eta, sesso, altezza, peso e attivita guidano prima la strategia benessere e poi il piano alimentare; con Supabase attivo vengono ricaricati anche strategia e piano compatibili con il profilo corrente."
 )
+
+if not base_config.has_supabase():
+    st.warning(
+        "Supabase non e configurato: questa istanza resta pubblica e il profilo si salva solo sul filesystem locale."
+    )
 
 st.markdown("<div class='section-label'>Profili e vincoli</div>", unsafe_allow_html=True)
 
@@ -779,20 +1021,97 @@ form_values = {
     "notes": notes,
 }
 
+current_request_payload = build_request_payload(form_values)
+
+if auth_session is not None and auth_client is not None:
+    if st.session_state.planning_state_user_id != auth_session.user_id:
+        clear_planning_state()
+        st.session_state.planning_state_user_id = auth_session.user_id
+
+    if st.session_state.request_payload is None and st.session_state.strategy_result is None:
+        try:
+            stored_planning_state = load_planning_state_from_supabase(
+                auth_client,
+                auth_session.user_id,
+                base_config.supabase_profile_table,
+            )
+        except Exception:
+            st.warning(
+                "Non riesco a leggere strategia e piano salvati su Supabase. Controlla tabella, colonne aggiuntive e policy RLS."
+            )
+        else:
+            if (
+                stored_planning_state is not None
+                and stored_planning_state.request_payload.to_dict() == current_request_payload.to_dict()
+            ):
+                st.session_state.request_payload = stored_planning_state.request_payload
+                st.session_state.strategy_result = stored_planning_state.strategy_result
+                st.session_state.diet_result = stored_planning_state.diet_result
+                st.info("Ho ricaricato l'ultima strategia e il piano salvati per questo account.")
+
 if save_profile_clicked or generate_strategy_clicked:
-    save_profile_form_values(form_values)
+    try:
+        if auth_session is not None and auth_client is not None:
+            save_profile_form_values_to_supabase(
+                form_values,
+                auth_client,
+                auth_session.user_id,
+                base_config.supabase_profile_table,
+            )
+        else:
+            save_profile_form_values(form_values)
+    except Exception:
+        st.warning(
+            "Il piano continua, ma il profilo non e stato salvato. Controlla configurazione Supabase e policy della tabella profili."
+        )
 
 if save_profile_clicked and not generate_strategy_clicked:
-    st.success("Profilo coppia salvato. Al prossimo refresh i campi verranno ripopolati automaticamente.")
+    if not same_request_payload(st.session_state.request_payload, current_request_payload):
+        clear_planning_state()
+        if auth_session is not None and auth_client is not None:
+            try:
+                clear_planning_state_from_supabase(
+                    auth_client,
+                    auth_session.user_id,
+                    base_config.supabase_profile_table,
+                )
+            except Exception:
+                st.warning(
+                    "Profilo aggiornato, ma non sono riuscito a rimuovere strategia e piano precedenti dal cloud."
+                )
+        st.info(
+            "Profilo aggiornato: ho rimosso strategia e piano precedenti per evitare incoerenze con i nuovi dati."
+        )
+
+if save_profile_clicked and not generate_strategy_clicked:
+    if auth_session is not None:
+        st.success("Profilo coppia salvato nel cloud per questo account.")
+    else:
+        st.success("Profilo coppia salvato. Al prossimo refresh i campi verranno ripopolati automaticamente.")
 
 if generate_strategy_clicked:
-    request_payload = build_request_payload(form_values)
+    request_payload = current_request_payload
     runtime_config = AppConfig.from_env()
 
     with st.spinner("Sto costruendo la strategia benessere personalizzata..."):
         st.session_state.strategy_result = generate_wellness_strategy(request_payload, runtime_config)
         st.session_state.diet_result = None
         st.session_state.request_payload = request_payload
+
+    if auth_session is not None and auth_client is not None:
+        try:
+            persist_planning_state(
+                base_config,
+                auth_client,
+                auth_session,
+                request_payload,
+                st.session_state.strategy_result,
+                None,
+            )
+        except Exception:
+            st.warning(
+                "Strategia generata, ma non sono riuscito a salvarla su Supabase. Controlla schema e policy della tabella profili."
+            )
 
     st.success("Strategia generata. Se la approvi, puoi creare o rigenerare la dieta settimanale con il pulsante dedicato.")
 
@@ -829,6 +1148,21 @@ if strategy_result and request_payload:
                 runtime_config,
             )
         diet_result = st.session_state.diet_result
+
+        if auth_session is not None and auth_client is not None:
+            try:
+                persist_planning_state(
+                    base_config,
+                    auth_client,
+                    auth_session,
+                    request_payload,
+                    strategy_result,
+                    diet_result,
+                )
+            except Exception:
+                st.warning(
+                    "Dieta generata, ma non sono riuscito a salvarla su Supabase. Controlla schema e policy della tabella profili."
+                )
 
     if diet_result:
         if diet_result.warning:

@@ -23,6 +23,10 @@ class AppConfig:
     groq_api_key: str | None = None
     openai_model: str = "gpt-4.1-mini"
     groq_model: str = "llama-3.3-70b-versatile"
+    supabase_url: str | None = None
+    supabase_anon_key: str | None = None
+    supabase_profile_table: str = "user_profiles"
+    supabase_auth_redirect_url: str | None = None
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -41,7 +45,14 @@ class AppConfig:
             groq_api_key=os.getenv("GROQ_API_KEY") or None,
             openai_model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
             groq_model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            supabase_url=os.getenv("SUPABASE_URL") or None,
+            supabase_anon_key=os.getenv("SUPABASE_ANON_KEY") or None,
+            supabase_profile_table=os.getenv("SUPABASE_PROFILE_TABLE", "user_profiles"),
+            supabase_auth_redirect_url=os.getenv("SUPABASE_AUTH_REDIRECT_URL") or None,
         )
+
+    def has_supabase(self) -> bool:
+        return bool(self.supabase_url and self.supabase_anon_key)
 
     def normalize_provider(self, provider: str | None = None) -> str:
         selected_provider = (provider or self.ai_provider or "").strip().lower()
