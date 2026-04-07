@@ -516,6 +516,7 @@ def _normalize_ai_plan(
     strategy: WellnessStrategy,
     model_source: str,
 ) -> WeeklyPlan:
+    fallback_plan = generate_fallback_plan(request, strategy)
     days_raw = raw_plan.get("days") if isinstance(raw_plan, dict) else []
     days: list[DayPlan] = []
 
@@ -523,26 +524,27 @@ def _normalize_ai_plan(
         days_raw = []
 
     for index, day_name in enumerate(DAYS):
+        fallback_day = fallback_plan.days[index]
         raw_day = days_raw[index] if index < len(days_raw) and isinstance(days_raw[index], dict) else {}
         days.append(
             DayPlan(
-                day=str(raw_day.get("day") or day_name),
-                breakfast=_normalize_meal_slot(raw_day.get("breakfast"), request, "Colazione condivisa"),
-                lunch=_normalize_meal_slot(raw_day.get("lunch"), request, "Pranzo condiviso"),
-                dinner=_normalize_meal_slot(raw_day.get("dinner"), request, "Cena condivisa"),
+                day=str(raw_day.get("day") or fallback_day.day or day_name),
+                breakfast=_normalize_meal_slot(raw_day.get("breakfast"), request, fallback_day.breakfast),
+                lunch=_normalize_meal_slot(raw_day.get("lunch"), request, fallback_day.lunch),
+                dinner=_normalize_meal_slot(raw_day.get("dinner"), request, fallback_day.dinner),
             )
         )
 
     shopping_list = _normalize_shopping_list(raw_plan.get("shopping_list"))
     if not shopping_list:
-        shopping_list = _build_shopping_list_from_days(days)
+        shopping_list = fallback_plan.shopping_list
 
-    prep_tasks = _to_string_list(raw_plan.get("prep_tasks")) or _build_prep_tasks(request, strategy)
-    planning_notes = _to_string_list(raw_plan.get("planning_notes")) or _build_planning_notes(request, strategy)
+    prep_tasks = _to_string_list(raw_plan.get("prep_tasks")) or fallback_plan.prep_tasks
+    planning_notes = _to_string_list(raw_plan.get("planning_notes")) or fallback_plan.planning_notes
 
     return WeeklyPlan(
-        title=str(raw_plan.get("title") or "Piano settimanale generato con AI"),
-        strategy=str(raw_plan.get("strategy") or _build_plan_strategy(request, strategy)),
+        title=str(raw_plan.get("title") or fallback_plan.title),
+        strategy=str(raw_plan.get("strategy") or fallback_plan.strategy),
         prep_tasks=prep_tasks,
         planning_notes=planning_notes,
         shopping_list=shopping_list,
@@ -551,26 +553,52 @@ def _normalize_ai_plan(
     )
 
 
-def _normalize_meal_slot(raw: Any, request: PlanningRequest, fallback_base: str) -> MealSlot:
+def _normalize_meal_slot(raw: Any, request: PlanningRequest, fallback_slot: MealSlot) -> MealSlot:
     raw = raw if isinstance(raw, dict) else {}
-    shared_base = str(raw.get("shared_base") or fallback_base)
-    person_one_variant = MealVariant.from_dict(
+    shared_base = str(raw.get("shared_base") or fallback_slot.shared_base)
+    person_one_variant = _normalize_meal_variant(
         raw.get("person_one") or raw.get(request.person_one.name),
-        fallback_title=f"Versione {request.person_one.name}",
+        fallback_slot.person_one,
     )
-    person_two_variant = MealVariant.from_dict(
+    person_two_variant = _normalize_meal_variant(
         raw.get("person_two") or raw.get(request.person_two.name),
-        fallback_title=f"Versione {request.person_two.name}",
+        fallback_slot.person_two,
     )
 
     return MealSlot(
         shared_base=shared_base,
         person_one=person_one_variant,
         person_two=person_two_variant,
-        prep_minutes=_coerce_int(raw.get("prep_minutes"), 15),
-        leftover_friendly=bool(raw.get("leftover_friendly")),
-        reuse_from_previous=str(raw.get("reuse_from_previous") or ""),
-        kitchen_load=str(raw.get("kitchen_load") or "Basso"),
+        prep_minutes=_coerce_int(raw.get("prep_minutes"), fallback_slot.prep_minutes),
+        leftover_friendly=_coerce_bool(raw.get("leftover_friendly"), fallback_slot.leftover_friendly),
+        reuse_from_previous=str(raw.get("reuse_from_previous") or fallback_slot.reuse_from_previous),
+        kitchen_load=str(raw.get("kitchen_load") or fallback_slot.kitchen_load),
+    )
+
+
+def _normalize_meal_variant(raw: Any, fallback_variant: MealVariant) -> MealVariant:
+    if isinstance(raw, str):
+        description = raw.strip() or fallback_variant.description
+        return MealVariant(
+            title=fallback_variant.title,
+            description=description,
+            ingredients=list(fallback_variant.ingredients),
+            prep_notes=fallback_variant.prep_notes,
+        )
+
+    if not isinstance(raw, dict):
+        return MealVariant(
+            title=fallback_variant.title,
+            description=fallback_variant.description,
+            ingredients=list(fallback_variant.ingredients),
+            prep_notes=fallback_variant.prep_notes,
+        )
+
+    return MealVariant(
+        title=str(raw.get("title") or fallback_variant.title),
+        description=str(raw.get("description") or fallback_variant.description),
+        ingredients=_to_string_list(raw.get("ingredients")) or list(fallback_variant.ingredients),
+        prep_notes=str(raw.get("prep_notes") or fallback_variant.prep_notes),
     )
 
 
@@ -977,6 +1005,16 @@ def _coerce_int(raw: Any, default: int) -> int:
         return int(raw)
     except (TypeError, ValueError):
         return default
+
+
+def _coerce_bool(raw: Any, default: bool) -> bool:
+    if raw in (None, ""):
+        return default
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"1", "true", "yes", "si", "on"}
+    return bool(raw)
 
 
 def _coerce_optional_int(raw: Any, default: int | None) -> int | None:

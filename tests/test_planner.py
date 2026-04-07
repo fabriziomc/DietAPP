@@ -7,6 +7,7 @@ from dietapp.formatters import compute_plan_metrics, plan_to_markdown
 from dietapp.models import HouseholdPreferences, PersonProfile, PlanningRequest
 from dietapp.persistence import load_profile_form_values, save_profile_form_values
 from dietapp.planner import (
+    _normalize_ai_plan,
     generate_diet_from_strategy,
     generate_fallback_plan,
     generate_fallback_wellness_strategy,
@@ -186,3 +187,47 @@ def test_markdown_and_metrics_are_populated() -> None:
     assert "## Strategia benessere" in markdown
     assert metrics["average_dinner_minutes"] > 0
     assert metrics["leftover_slots"] >= 1
+
+
+def test_ai_plan_normalization_fills_missing_last_day_from_fallback() -> None:
+    request = build_request()
+    strategy = generate_fallback_wellness_strategy(request)
+    raw_plan = {
+        "title": "Piano AI incompleto",
+        "strategy": "Strategia AI",
+        "days": [
+            {
+                "day": "Lunedi",
+                "breakfast": {
+                    "shared_base": "Base colazione",
+                    "person_one": {
+                        "title": "Colazione uno",
+                        "description": "Descrizione uno",
+                        "ingredients": ["avena"],
+                        "prep_notes": "Monta tutto",
+                    },
+                    "person_two": {
+                        "title": "Colazione due",
+                        "description": "Descrizione due",
+                        "ingredients": ["yogurt"],
+                        "prep_notes": "Monta tutto",
+                    },
+                    "prep_minutes": 5,
+                    "leftover_friendly": False,
+                    "reuse_from_previous": "",
+                    "kitchen_load": "Molto basso",
+                },
+                "lunch": {},
+                "dinner": {},
+            }
+        ]
+    }
+
+    plan = _normalize_ai_plan(raw_plan, request, strategy, "Groq | test")
+
+    assert len(plan.days) == 7
+    sunday = plan.days[-1]
+    assert sunday.day == "Domenica"
+    assert sunday.breakfast.person_one.description != "Versione da rifinire"
+    assert sunday.lunch.person_one.ingredients
+    assert sunday.dinner.person_two.prep_notes
