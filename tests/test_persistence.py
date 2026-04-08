@@ -109,6 +109,7 @@ def test_profile_values_are_persisted_to_supabase_backend() -> None:
             "person_one_height_cm": 178,
             "person_one_weight_kg": 82.0,
             "person_one_target_weight_kg": 77.5,
+            "person_one_allow_protein_powder": True,
             "person_one_activity": "Palestra 3 volte a settimana",
             "person_one_dislikes": "finocchi",
             "person_one_allergies": "",
@@ -119,6 +120,7 @@ def test_profile_values_are_persisted_to_supabase_backend() -> None:
             "person_two_height_cm": 165,
             "person_two_weight_kg": 63.0,
             "person_two_target_weight_kg": 66.0,
+            "person_two_allow_protein_powder": False,
             "person_two_activity": "Yoga e camminate",
             "person_two_dislikes": "olive",
             "person_two_allergies": "",
@@ -141,6 +143,8 @@ def test_profile_values_are_persisted_to_supabase_backend() -> None:
     assert loaded["person_two_name"] == "Sara"
     assert loaded["person_one_target_weight_kg"] == 77.5
     assert loaded["person_two_target_weight_kg"] == 66.0
+    assert loaded["person_one_allow_protein_powder"] is True
+    assert loaded["person_two_allow_protein_powder"] is False
     assert loaded["leftover_lunches"] == 4
     assert loaded["batch_days"] == ["Domenica"]
 
@@ -157,6 +161,7 @@ def test_planning_state_is_persisted_and_restored_from_supabase_backend() -> Non
             height_cm=178,
             weight_kg=82.0,
             target_weight_kg=77.5,
+            allow_protein_powder=True,
             activity_summary="Palestra e camminate",
         ),
         person_two=PersonProfile(
@@ -167,6 +172,7 @@ def test_planning_state_is_persisted_and_restored_from_supabase_backend() -> Non
             height_cm=165,
             weight_kg=63.0,
             target_weight_kg=66.0,
+            allow_protein_powder=False,
             activity_summary="Yoga e camminate",
         ),
         preferences=HouseholdPreferences(
@@ -263,6 +269,8 @@ def test_planning_state_is_persisted_and_restored_from_supabase_backend() -> Non
     assert loaded.request_payload.person_one.name == "Fabrizio"
     assert loaded.request_payload.person_one.target_weight_kg == 77.5
     assert loaded.request_payload.person_two.target_weight_kg == 66.0
+    assert loaded.request_payload.person_one.allow_protein_powder is True
+    assert loaded.request_payload.person_two.allow_protein_powder is False
     assert loaded.strategy_result.strategy.person_two.protein_target_g == 95
     assert loaded.diet_result is not None
     assert loaded.diet_result.plan.days[0].lunch.person_two.title == "Riso con ceci"
@@ -287,3 +295,5 @@ def test_legacy_profile_without_target_weight_defaults_to_current_weight(tmp_pat
 
     assert loaded["person_one_target_weight_kg"] == 82.0
     assert loaded["person_two_target_weight_kg"] == 63.0
+    assert loaded["person_one_allow_protein_powder"] is False
+    assert loaded["person_two_allow_protein_powder"] is False

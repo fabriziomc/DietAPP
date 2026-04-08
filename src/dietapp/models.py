@@ -69,6 +69,7 @@ class PersonProfile:
     height_cm: int | None = None
     weight_kg: float | None = None
     target_weight_kg: float | None = None
+    allow_protein_powder: bool = False
     activity_summary: str = ""
     daily_kcal: int | None = None
     protein_target: int | None = None
@@ -89,6 +90,7 @@ class PersonProfile:
             height_cm=_coerce_int(payload.get("height_cm")),
             weight_kg=_coerce_float(payload.get("weight_kg")),
             target_weight_kg=_coerce_float(target_weight_raw),
+            allow_protein_powder=_coerce_bool(payload.get("allow_protein_powder")),
             activity_summary=str(payload.get("activity_summary") or "").strip(),
             daily_kcal=_coerce_int(payload.get("daily_kcal")),
             protein_target=_coerce_int(payload.get("protein_target")),

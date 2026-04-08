@@ -365,6 +365,8 @@ def describe_person_profile(person: PersonProfile) -> str:
         if abs(weight_delta) >= 0.5:
             direction_label = "dimagrimento" if weight_delta < 0 else "aumento"
             parts.append(f"target {format_weight(person.target_weight_kg)} ({direction_label})")
+    if person.allow_protein_powder:
+        parts.append("proteine in polvere ok")
     return " | ".join(parts) if parts else "Profilo non completo"
 
 
@@ -392,6 +394,7 @@ def build_request_payload(form_values: dict[str, object]) -> PlanningRequest:
         height_cm=int(form_values["person_one_height_cm"]),
         weight_kg=float(form_values["person_one_weight_kg"]),
         target_weight_kg=float(form_values["person_one_target_weight_kg"]),
+        allow_protein_powder=bool(form_values["person_one_allow_protein_powder"]),
         activity_summary=str(form_values["person_one_activity"]).strip(),
         dislikes=csv_to_list(str(form_values["person_one_dislikes"])),
         allergies=csv_to_list(str(form_values["person_one_allergies"])),
@@ -404,6 +407,7 @@ def build_request_payload(form_values: dict[str, object]) -> PlanningRequest:
         height_cm=int(form_values["person_two_height_cm"]),
         weight_kg=float(form_values["person_two_weight_kg"]),
         target_weight_kg=float(form_values["person_two_target_weight_kg"]),
+        allow_protein_powder=bool(form_values["person_two_allow_protein_powder"]),
         activity_summary=str(form_values["person_two_activity"]).strip(),
         dislikes=csv_to_list(str(form_values["person_two_dislikes"])),
         allergies=csv_to_list(str(form_values["person_two_allergies"])),
@@ -905,7 +909,7 @@ if base_config.get_api_key():
 else:
     st.info("Nessuna chiave AI valida trovata nel file .env: usero il planner locale.")
 st.caption(
-    f"Il profilo della coppia si salva in {profile_storage_label}. Eta, sesso, altezza, peso, obiettivo peso e attivita guidano prima la strategia benessere e poi il piano alimentare; con Supabase attivo vengono ricaricati anche strategia e piano compatibili con il profilo corrente."
+    f"Il profilo della coppia si salva in {profile_storage_label}. Eta, sesso, altezza, peso, obiettivo peso, attivita e l'eventuale uso di proteine in polvere guidano prima la strategia benessere e poi il piano alimentare; con Supabase attivo vengono ricaricati anche strategia e piano compatibili con il profilo corrente."
 )
 
 if not base_config.has_supabase():
@@ -960,6 +964,11 @@ with st.form("planner-form", clear_on_submit=False):
             step=0.5,
             format="%.1f",
             help="Se uguale al peso attuale indica mantenimento; se piu basso o piu alto segnala dimagrimento o aumento di peso.",
+        )
+        person_one_allow_protein_powder = st.checkbox(
+            "Consenti proteine in polvere persona 1",
+            value=bool(form_defaults["person_one_allow_protein_powder"]),
+            help="Il planner potra suggerirle solo se davvero utili per praticita o target proteico, soprattutto nei focus muscolari.",
         )
         person_one_activity = st.text_area(
             "Attivita motoria persona 1",
@@ -1019,6 +1028,11 @@ with st.form("planner-form", clear_on_submit=False):
             step=0.5,
             format="%.1f",
             help="Se uguale al peso attuale indica mantenimento; se piu basso o piu alto segnala dimagrimento o aumento di peso.",
+        )
+        person_two_allow_protein_powder = st.checkbox(
+            "Consenti proteine in polvere persona 2",
+            value=bool(form_defaults["person_two_allow_protein_powder"]),
+            help="Il planner potra suggerirle solo se davvero utili per praticita o target proteico, soprattutto nei focus muscolari.",
         )
         person_two_activity = st.text_area(
             "Attivita motoria persona 2",
@@ -1106,6 +1120,7 @@ form_values = {
     "person_one_height_cm": person_one_height_cm,
     "person_one_weight_kg": person_one_weight_kg,
     "person_one_target_weight_kg": person_one_target_weight_kg,
+    "person_one_allow_protein_powder": person_one_allow_protein_powder,
     "person_one_activity": person_one_activity,
     "person_one_dislikes": person_one_dislikes,
     "person_one_allergies": person_one_allergies,
@@ -1116,6 +1131,7 @@ form_values = {
     "person_two_height_cm": person_two_height_cm,
     "person_two_weight_kg": person_two_weight_kg,
     "person_two_target_weight_kg": person_two_target_weight_kg,
+    "person_two_allow_protein_powder": person_two_allow_protein_powder,
     "person_two_activity": person_two_activity,
     "person_two_dislikes": person_two_dislikes,
     "person_two_allergies": person_two_allergies,

@@ -20,6 +20,7 @@ DEFAULT_PROFILE_VALUES: dict[str, Any] = {
     "person_one_height_cm": 178,
     "person_one_weight_kg": 82.0,
     "person_one_target_weight_kg": 82.0,
+    "person_one_allow_protein_powder": False,
     "person_one_activity": "Lavoro d'ufficio, 3 allenamenti a settimana e camminate nei giorni restanti.",
     "person_one_dislikes": "",
     "person_one_allergies": "",
@@ -30,6 +31,7 @@ DEFAULT_PROFILE_VALUES: dict[str, Any] = {
     "person_two_height_cm": 165,
     "person_two_weight_kg": 63.0,
     "person_two_target_weight_kg": 63.0,
+    "person_two_allow_protein_powder": False,
     "person_two_activity": "Attivita moderata, yoga e camminate regolari durante la settimana.",
     "person_two_dislikes": "",
     "person_two_allergies": "",
@@ -220,6 +222,19 @@ def _sanitize_profile_values(raw_values: Any) -> dict[str, Any]:
                 ]
             else:
                 clean_values[field_name] = list(default_value)
+            continue
+
+        if isinstance(default_value, bool):
+            if isinstance(candidate_value, str):
+                clean_values[field_name] = candidate_value.strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "si",
+                    "on",
+                }
+            else:
+                clean_values[field_name] = bool(candidate_value)
             continue
 
         if isinstance(default_value, int):

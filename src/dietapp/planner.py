@@ -68,6 +68,12 @@ KEYWORD_BUCKETS = {
         "robiola",
         "primo sale",
     ],
+    "Supplementi": [
+        "proteine in polvere",
+        "proteine whey",
+        "whey",
+        "proteine vegetali",
+    ],
     "Verdure": [
         "zucchine",
         "peperoni",
@@ -434,6 +440,7 @@ def generate_fallback_plan(
         )
 
     shopping_list = {category: sorted(items) for category, items in shopping_map.items()}
+    _apply_protein_powder_support(request, resolved_strategy, shopping_list, prep_tasks, planning_notes)
     strategy_text = _build_plan_strategy(request, resolved_strategy)
     if substitution_notes:
         planning_notes.append(
@@ -528,6 +535,8 @@ Payload:
 Regole:
 - Usa soprattutto eta, sesso, altezza, peso e descrizione dell'attivita fisica.
 - Se target_weight_kg e inferiore o superiore al peso attuale, interpretalo come obiettivo esplicito di dimagrimento o aumento di peso.
+- Se allow_protein_powder=true per una persona, puoi considerare proteine in polvere solo come supporto pratico al target proteico, non come base del piano.
+- Se allow_protein_powder=false, non proporre proteine in polvere per quella persona.
 - Calorie e proteine devono essere output derivati, non la base del ragionamento.
 - Non fare diagnosi mediche e non proporre tagli calorici aggressivi.
 - Tieni conto del diverso regime alimentare della coppia.
@@ -577,6 +586,8 @@ Regole:
 - Le ricette devono essere concrete e riconoscibili come cucina italiana domestica o tradizione regionale italiana alleggerita.
 - Minimizza il lavoro in cucina con basi comuni, batch cooking, ingredienti ripetuti e avanzi intelligenti.
 - Usa gli stessi nomi presenti nel payload per person_one e person_two.
+- Se allow_protein_powder=true, puoi usare proteine in polvere solo in modo sobrio, massimo una porzione al giorno e solo quando aiutano davvero il target proteico.
+- Se allow_protein_powder=false, evita di inserirle nel piano per quella persona.
 - Mantieni le cene entro il tempo massimo richiesto quando possibile.
 - Evita ingredienti esclusi, allergie e cibi non graditi.
 - Usa budget e cucine preferite per orientare la scelta degli ingredienti, ma resta in un perimetro di ricette italiane.
@@ -591,6 +602,7 @@ Restituisci JSON con questo schema esatto:
   "shopping_list": {{
     "Verdure": ["string"],
     "Proteine": ["string"],
+        "Supplementi": ["string"],
     "Dispensa": ["string"],
     "Frigo": ["string"]
   }},
@@ -785,6 +797,7 @@ def _copy_person_with_targets(
         height_cm=person.height_cm,
         weight_kg=person.weight_kg,
         target_weight_kg=person.target_weight_kg,
+        allow_protein_powder=person.allow_protein_powder,
         activity_summary=person.activity_summary,
         daily_kcal=person_strategy.daily_kcal_target,
         protein_target=person_strategy.protein_target_g,
@@ -978,6 +991,58 @@ def _protein_multiplier_for_focus(focus: str, dietary_style: str) -> float:
     return multiplier
 
 
+def _protein_powder_product(person: PersonProfile) -> str:
+    lowered_allergies = " ".join(person.allergies).lower()
+    if person.dietary_style.strip().lower() == "vegetariano" or any(
+        term in lowered_allergies for term in ("lattosio", "latte", "whey")
+    ):
+        return "proteine vegetali in polvere"
+    return "proteine whey in polvere"
+
+
+def _should_recommend_protein_powder(
+    person: PersonProfile,
+    person_strategy: PersonWellnessStrategy,
+) -> bool:
+    if not person.allow_protein_powder:
+        return False
+
+    lowered_focus = person_strategy.focus.lower()
+    reference_weight = person.weight_kg if person.weight_kg is not None else 70.0
+    protein_target = person_strategy.protein_target_g or 0
+
+    if any(
+        term in lowered_focus
+        for term in ("aumento di peso", "recupero energetico", "muscolare", "performance", "ricomposizione")
+    ):
+        return True
+    if protein_target >= reference_weight * 1.8:
+        return True
+    if person.dietary_style.strip().lower() == "vegetariano" and protein_target >= reference_weight * 1.6:
+        return True
+    return False
+
+
+def _build_protein_powder_guidance(person: PersonProfile, focus: str) -> str | None:
+    if not person.allow_protein_powder:
+        return None
+
+    powder_label = _protein_powder_product(person)
+    lowered_focus = focus.lower()
+    if any(
+        term in lowered_focus
+        for term in ("aumento di peso", "recupero energetico", "muscolare", "performance", "ricomposizione")
+    ):
+        return (
+            f"Se con i soli pasti fai fatica a raggiungere il target, puoi usare {powder_label} "
+            "in modo pratico, preferibilmente a colazione o nel post-allenamento, senza superare una porzione al giorno."
+        )
+    return (
+        f"Le {powder_label} restano opzionali: usale solo quando una giornata resta troppo bassa in proteine, "
+        "senza sostituire i pasti principali."
+    )
+
+
 def _minimum_calories(sex: str) -> int:
     normalized = sex.strip().lower()
     if normalized == "uomo":
@@ -1024,6 +1089,10 @@ def _build_nutrition_guidance(person: PersonProfile, focus: str) -> list[str]:
         guidance.append("Distribuisci bene legumi, tofu, uova e latticini per mantenere costante la quota proteica vegetariana.")
     else:
         guidance.append("Alterna carni magre, uova, latticini e legumi per non dipendere sempre dalla stessa fonte proteica.")
+
+    protein_powder_guidance = _build_protein_powder_guidance(person, focus)
+    if protein_powder_guidance:
+        guidance.append(protein_powder_guidance)
 
     return guidance
 
@@ -1239,6 +1308,43 @@ def _build_planning_notes(request: PlanningRequest, strategy: WellnessStrategy) 
     if request.preferences.notes:
         notes.append(f"Nota famiglia: {request.preferences.notes}")
     return notes
+
+
+def _apply_protein_powder_support(
+    request: PlanningRequest,
+    strategy: WellnessStrategy,
+    shopping_list: dict[str, list[str]],
+    prep_tasks: list[str],
+    planning_notes: list[str],
+) -> None:
+    supplement_items: set[str] = set()
+    supported_people: list[str] = []
+    people = [
+        (request.person_one, strategy.person_one),
+        (request.person_two, strategy.person_two),
+    ]
+
+    for person, person_strategy in people:
+        if not _should_recommend_protein_powder(person, person_strategy):
+            continue
+
+        powder_label = _protein_powder_product(person)
+        supplement_items.add(powder_label)
+        supported_people.append(person.name)
+        planning_notes.append(
+            f"{person.name}: proteine in polvere abilitate. Usa 1 porzione di {powder_label} solo nei giorni di allenamento o quando colazione e post-workout non bastano a coprire il target proteico."
+        )
+
+    if not supplement_items:
+        return
+
+    existing_items = set(shopping_list.get("Supplementi", []))
+    shopping_list["Supplementi"] = sorted(existing_items | supplement_items)
+    prep_tasks.append(
+        "Tieni gia porzionate le proteine in polvere per "
+        + ", ".join(supported_people)
+        + " e usale solo come supporto pratico, non come sostituto del pasto."
+    )
 
 
 def _build_bundle_source_label(strategy_source: str, plan_source: str) -> str:

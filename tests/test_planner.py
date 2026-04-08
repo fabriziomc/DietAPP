@@ -134,6 +134,7 @@ def test_profile_values_are_persisted_locally(tmp_path: Path) -> None:
             "person_one_height_cm": 178,
             "person_one_weight_kg": 82.0,
             "person_one_target_weight_kg": 77.5,
+            "person_one_allow_protein_powder": True,
             "person_one_activity": "Palestra 3 volte a settimana",
             "person_one_dislikes": "finocchi",
             "person_one_allergies": "",
@@ -144,6 +145,7 @@ def test_profile_values_are_persisted_locally(tmp_path: Path) -> None:
             "person_two_height_cm": 165,
             "person_two_weight_kg": 63.0,
             "person_two_target_weight_kg": 66.0,
+            "person_two_allow_protein_powder": False,
             "person_two_activity": "Yoga e camminate",
             "person_two_dislikes": "olive",
             "person_two_allergies": "",
@@ -167,6 +169,8 @@ def test_profile_values_are_persisted_locally(tmp_path: Path) -> None:
     assert loaded["person_two_weight_kg"] == 63.0
     assert loaded["person_one_target_weight_kg"] == 77.5
     assert loaded["person_two_target_weight_kg"] == 66.0
+    assert loaded["person_one_allow_protein_powder"] is True
+    assert loaded["person_two_allow_protein_powder"] is False
     assert loaded["leftover_lunches"] == 4
     assert loaded["batch_days"] == ["Domenica"]
 
@@ -199,6 +203,31 @@ def test_local_wellness_strategy_uses_target_weight_goal() -> None:
     )
     assert strategy.person_two.daily_kcal_target > baseline_strategy.person_two.daily_kcal_target
     assert "68" in strategy.person_two.rationale
+
+
+def test_local_strategy_can_recommend_protein_powder_when_enabled() -> None:
+    request = build_request()
+    request.person_one.target_weight_kg = 88.0
+    request.person_one.allow_protein_powder = True
+
+    strategy = generate_fallback_wellness_strategy(request)
+
+    rendered_guidance = " ".join(strategy.person_one.nutrition_guidance).lower()
+    assert "polvere" in rendered_guidance
+    assert "whey" in rendered_guidance or "proteine" in rendered_guidance
+
+
+def test_fallback_plan_adds_protein_powder_to_notes_and_shopping() -> None:
+    request = build_request()
+    request.person_one.target_weight_kg = 88.0
+    request.person_one.allow_protein_powder = True
+
+    strategy = generate_fallback_wellness_strategy(request)
+    plan = generate_fallback_plan(request, strategy)
+
+    assert "Supplementi" in plan.shopping_list
+    assert any("proteine" in item.lower() for item in plan.shopping_list["Supplementi"])
+    assert any("polvere" in note.lower() for note in plan.planning_notes)
 
 
 def test_strategy_prompt_preview_contains_system_and_payload() -> None:
