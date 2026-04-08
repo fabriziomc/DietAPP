@@ -5,7 +5,7 @@ Applicazione web in Python + Streamlit per pianificare la dieta settimanale di u
 ## Cosa fa
 
 - raccoglie i profili alimentari di due persone
-- raccoglie anche eta, sesso, altezza, peso e attivita motoria descrittiva
+- raccoglie anche eta, sesso, altezza, peso, obiettivo peso e attivita motoria descrittiva
 - genera prima una strategia benessere personalizzata e poi il piano settimanale con colazione, pranzo e cena
 - cerca di riusare basi comuni tra versione onnivora e vegetariana
 - privilegia batch cooking, avanzi intelligenti e ingredienti ricorrenti
@@ -98,7 +98,7 @@ Quando il profilo cambia, l'app invalida la strategia e il piano precedenti per 
 
 ## Nuovo flusso
 
-1. inserisci per ciascuna persona dati fisici, regime alimentare, attivita motoria e vincoli alimentari
+1. inserisci per ciascuna persona dati fisici, obiettivo peso, regime alimentare, attivita motoria e vincoli alimentari
 2. l'app genera una strategia benessere con focus e target derivati
 3. da quella strategia costruisce il piano settimanale condiviso per la coppia
 

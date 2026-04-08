@@ -236,6 +236,8 @@ SEDENTARY_KEYWORDS = (
     "auto",
 )
 
+WEIGHT_GOAL_TOLERANCE_KG = 0.5
+
 
 @dataclass(slots=True)
 class PlanResult:
@@ -496,6 +498,25 @@ def _call_llm_json(config: AppConfig, system_prompt: str, user_prompt: str) -> d
     return json.loads(content)
 
 
+def build_strategy_prompt_preview(request: PlanningRequest) -> str:
+    return _format_prompt_preview(STRATEGY_SYSTEM_PROMPT, _build_strategy_ai_prompt(request))
+
+
+def build_plan_prompt_preview(request: PlanningRequest, strategy: WellnessStrategy) -> str:
+    return _format_prompt_preview(PLAN_SYSTEM_PROMPT, _build_plan_ai_prompt(request, strategy))
+
+
+def _format_prompt_preview(system_prompt: str, user_prompt: str) -> str:
+    return "\n\n".join(
+        [
+            "=== SYSTEM PROMPT ===",
+            system_prompt,
+            "=== USER PROMPT ===",
+            user_prompt,
+        ]
+    )
+
+
 def _build_strategy_ai_prompt(request: PlanningRequest) -> str:
     payload = request.to_dict()
     return f"""
@@ -506,6 +527,7 @@ Payload:
 
 Regole:
 - Usa soprattutto eta, sesso, altezza, peso e descrizione dell'attivita fisica.
+- Se target_weight_kg e inferiore o superiore al peso attuale, interpretalo come obiettivo esplicito di dimagrimento o aumento di peso.
 - Calorie e proteine devono essere output derivati, non la base del ragionamento.
 - Non fare diagnosi mediche e non proporre tagli calorici aggressivi.
 - Tieni conto del diverso regime alimentare della coppia.
@@ -762,6 +784,7 @@ def _copy_person_with_targets(
         sex=person.sex,
         height_cm=person.height_cm,
         weight_kg=person.weight_kg,
+        target_weight_kg=person.target_weight_kg,
         activity_summary=person.activity_summary,
         daily_kcal=person_strategy.daily_kcal_target,
         protein_target=person_strategy.protein_target_g,
@@ -795,17 +818,22 @@ def _build_local_person_strategy(person: PersonProfile) -> PersonWellnessStrateg
     activity_factor, activity_label = _estimate_activity_factor(person.activity_summary)
     bmi = _estimate_bmi(person.weight_kg, person.height_cm)
     tdee = _estimate_tdee(person, activity_factor)
-    focus, calorie_adjustment = _infer_focus_and_adjustment(bmi, activity_factor)
+    focus, calorie_adjustment = _infer_focus_and_adjustment(person, bmi, activity_factor)
     daily_kcal_target = _round_to_step(max(_minimum_calories(person.sex), tdee + calorie_adjustment), 50)
     protein_multiplier = _protein_multiplier_for_focus(focus, person.dietary_style)
     reference_weight = person.weight_kg if person.weight_kg is not None else 70.0
     protein_target = _round_to_step(reference_weight * protein_multiplier, 5)
 
     bmi_copy = f"BMI stimato {bmi:.1f}" if bmi is not None else "composizione corporea stimata"
-    rationale = (
+    rationale_parts = []
+    weight_goal_rationale = _build_weight_goal_rationale(person)
+    if weight_goal_rationale:
+        rationale_parts.append(weight_goal_rationale)
+    rationale_parts.append(
         f"Eta, {bmi_copy} e attivita {activity_label} suggeriscono di puntare a {focus.lower()}, "
         f"usando un approccio sostenibile e pasti facili da ripetere durante la settimana."
     )
+    rationale = " ".join(rationale_parts)
     return PersonWellnessStrategy(
         focus=focus,
         rationale=rationale,
@@ -857,7 +885,69 @@ def _estimate_tdee(person: PersonProfile, activity_factor: float) -> float:
     return bmr * activity_factor
 
 
-def _infer_focus_and_adjustment(bmi: float | None, activity_factor: float) -> tuple[str, int]:
+def _weight_goal_delta(person: PersonProfile) -> float | None:
+    if person.weight_kg is None or person.target_weight_kg is None:
+        return None
+    return person.target_weight_kg - person.weight_kg
+
+
+def _weight_goal_direction(person: PersonProfile) -> str:
+    delta = _weight_goal_delta(person)
+    if delta is None or abs(delta) < WEIGHT_GOAL_TOLERANCE_KG:
+        return "maintain"
+    return "gain" if delta > 0 else "lose"
+
+
+def _format_weight_label(value: float | None) -> str:
+    if value is None:
+        return "n.d."
+    rounded_value = round(value, 1)
+    if float(rounded_value).is_integer():
+        return f"{int(rounded_value)} kg"
+    return f"{rounded_value:.1f} kg"
+
+
+def _build_weight_goal_rationale(person: PersonProfile) -> str:
+    delta = _weight_goal_delta(person)
+    if delta is None or abs(delta) < WEIGHT_GOAL_TOLERANCE_KG:
+        return ""
+    if delta < 0:
+        return (
+            f"L'obiettivo peso dichiarato e scendere da {_format_weight_label(person.weight_kg)} "
+            f"a {_format_weight_label(person.target_weight_kg)}."
+        )
+    return (
+        f"L'obiettivo peso dichiarato e salire da {_format_weight_label(person.weight_kg)} "
+        f"a {_format_weight_label(person.target_weight_kg)}."
+    )
+
+
+def _infer_focus_and_adjustment(person: PersonProfile, bmi: float | None, activity_factor: float) -> tuple[str, int]:
+    goal_direction = _weight_goal_direction(person)
+    goal_delta = _weight_goal_delta(person) or 0.0
+
+    if goal_direction == "lose":
+        if goal_delta <= -8:
+            return "Dimagrimento graduale e alta sazieta", -450 if activity_factor < 1.5 else -350
+        if goal_delta <= -3:
+            return "Dimagrimento graduale e ricomposizione", -350 if activity_factor < 1.55 else -250
+        return "Ricomposizione e lieve dimagrimento", -200
+
+    if goal_direction == "gain":
+        if goal_delta >= 8:
+            focus = "Aumento di peso graduale e costruzione muscolare"
+            calorie_adjustment = 300 if activity_factor >= 1.4 else 250
+        elif goal_delta >= 3:
+            focus = "Aumento di peso controllato e supporto muscolare"
+            calorie_adjustment = 250 if activity_factor >= 1.5 else 200
+        else:
+            focus = "Recupero energetico e lieve aumento di peso"
+            calorie_adjustment = 150
+
+        if bmi is not None and bmi < 20.5:
+            calorie_adjustment = max(calorie_adjustment, 250)
+        return focus, calorie_adjustment
+
     if bmi is not None and bmi >= 30:
         return "Dimagrimento graduale e alta sazieta", -400
     if bmi is not None and bmi >= 25:
@@ -880,6 +970,8 @@ def _protein_multiplier_for_focus(focus: str, dietary_style: str) -> float:
         multiplier = 1.7
     elif "muscolare" in lowered_focus or "performance" in lowered_focus:
         multiplier = 1.8
+    elif "aumento di peso" in lowered_focus or "recupero energetico" in lowered_focus:
+        multiplier = 1.6
 
     if dietary_style.strip().lower() == "vegetariano":
         multiplier += 0.1
@@ -901,6 +993,8 @@ def _build_movement_guidance(activity_summary: str, focus: str) -> str:
 
     if "dimagrimento" in lowered_focus and any(keyword in lowered_activity for keyword in SEDENTARY_KEYWORDS):
         return "Mantieni i pasti sazianti e prova ad aggiungere camminate quotidiane o 2-3 sessioni leggere di forza."
+    if "aumento di peso" in lowered_focus or "recupero energetico" in lowered_focus:
+        return "Accompagna il surplus con 2-4 sessioni di forza e cura recupero, sonno e regolarita dei pasti."
     if "performance" in lowered_focus or "muscolare" in lowered_focus:
         return "Distribuisci bene i pasti nei giorni di allenamento e cura recupero, sonno e idratazione."
     if any(keyword in lowered_activity for keyword in LIGHT_ACTIVITY_KEYWORDS):
@@ -917,6 +1011,10 @@ def _build_nutrition_guidance(person: PersonProfile, focus: str) -> list[str]:
     lowered_focus = focus.lower()
     if "dimagrimento" in lowered_focus:
         guidance.append("Usa pasti voluminosi, condimenti misurati e snack facili da controllare, evitando deficit estremi.")
+    elif "aumento di peso" in lowered_focus or "recupero energetico" in lowered_focus:
+        guidance.append(
+            "Aumenta l'energia con porzioni progressivamente piu ricche, carboidrati gestibili e uno snack strategico, senza ricorrere a pasti enormi."
+        )
     elif "muscolare" in lowered_focus or "performance" in lowered_focus:
         guidance.append("Inserisci carboidrati gestibili intorno agli allenamenti e una quota proteica stabile nel post-workout.")
     else:

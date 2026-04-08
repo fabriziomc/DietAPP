@@ -19,6 +19,7 @@ DEFAULT_PROFILE_VALUES: dict[str, Any] = {
     "person_one_sex": "Uomo",
     "person_one_height_cm": 178,
     "person_one_weight_kg": 82.0,
+    "person_one_target_weight_kg": 82.0,
     "person_one_activity": "Lavoro d'ufficio, 3 allenamenti a settimana e camminate nei giorni restanti.",
     "person_one_dislikes": "",
     "person_one_allergies": "",
@@ -28,6 +29,7 @@ DEFAULT_PROFILE_VALUES: dict[str, Any] = {
     "person_two_sex": "Donna",
     "person_two_height_cm": 165,
     "person_two_weight_kg": 63.0,
+    "person_two_target_weight_kg": 63.0,
     "person_two_activity": "Attivita moderata, yoga e camminate regolari durante la settimana.",
     "person_two_dislikes": "",
     "person_two_allergies": "",
@@ -209,6 +211,7 @@ def _sanitize_profile_values(raw_values: Any) -> dict[str, Any]:
         return clean_values
 
     for field_name, default_value in DEFAULT_PROFILE_VALUES.items():
+        has_candidate_value = field_name in raw_values
         candidate_value = raw_values.get(field_name, default_value)
         if isinstance(default_value, list):
             if isinstance(candidate_value, list):
@@ -227,10 +230,18 @@ def _sanitize_profile_values(raw_values: Any) -> dict[str, Any]:
             continue
 
         if isinstance(default_value, float):
+            if field_name.endswith("_target_weight_kg") and not has_candidate_value:
+                weight_field_name = field_name.replace("_target_weight_kg", "_weight_kg")
+                clean_values[field_name] = float(clean_values.get(weight_field_name, default_value))
+                continue
             try:
                 clean_values[field_name] = float(candidate_value)
             except (TypeError, ValueError):
-                clean_values[field_name] = default_value
+                if field_name.endswith("_target_weight_kg"):
+                    weight_field_name = field_name.replace("_target_weight_kg", "_weight_kg")
+                    clean_values[field_name] = float(clean_values.get(weight_field_name, default_value))
+                else:
+                    clean_values[field_name] = default_value
             continue
 
         clean_values[field_name] = "" if candidate_value is None else str(candidate_value).strip()

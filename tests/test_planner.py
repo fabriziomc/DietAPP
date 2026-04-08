@@ -8,6 +8,8 @@ from dietapp.models import HouseholdPreferences, PersonProfile, PlanningRequest
 from dietapp.persistence import load_profile_form_values, save_profile_form_values
 from dietapp.planner import (
     _normalize_ai_plan,
+    build_plan_prompt_preview,
+    build_strategy_prompt_preview,
     generate_diet_from_strategy,
     generate_fallback_plan,
     generate_fallback_wellness_strategy,
@@ -131,6 +133,7 @@ def test_profile_values_are_persisted_locally(tmp_path: Path) -> None:
             "person_one_sex": "Uomo",
             "person_one_height_cm": 178,
             "person_one_weight_kg": 82.0,
+            "person_one_target_weight_kg": 77.5,
             "person_one_activity": "Palestra 3 volte a settimana",
             "person_one_dislikes": "finocchi",
             "person_one_allergies": "",
@@ -140,6 +143,7 @@ def test_profile_values_are_persisted_locally(tmp_path: Path) -> None:
             "person_two_sex": "Donna",
             "person_two_height_cm": 165,
             "person_two_weight_kg": 63.0,
+            "person_two_target_weight_kg": 66.0,
             "person_two_activity": "Yoga e camminate",
             "person_two_dislikes": "olive",
             "person_two_allergies": "",
@@ -161,6 +165,8 @@ def test_profile_values_are_persisted_locally(tmp_path: Path) -> None:
     assert loaded["person_two_name"] == "Sara"
     assert loaded["person_one_age"] == 39
     assert loaded["person_two_weight_kg"] == 63.0
+    assert loaded["person_one_target_weight_kg"] == 77.5
+    assert loaded["person_two_target_weight_kg"] == 66.0
     assert loaded["leftover_lunches"] == 4
     assert loaded["batch_days"] == ["Domenica"]
 
@@ -174,6 +180,46 @@ def test_local_wellness_strategy_derives_focus_and_targets() -> None:
     assert strategy.person_one.protein_target_g is not None
     assert strategy.person_two.focus
     assert strategy.shared_principles
+
+
+def test_local_wellness_strategy_uses_target_weight_goal() -> None:
+    baseline_strategy = generate_fallback_wellness_strategy(build_request())
+    request = build_request()
+    request.person_one.target_weight_kg = 75.0
+    request.person_two.target_weight_kg = 68.0
+
+    strategy = generate_fallback_wellness_strategy(request)
+
+    assert "dimagr" in strategy.person_one.focus.lower()
+    assert strategy.person_one.daily_kcal_target < baseline_strategy.person_one.daily_kcal_target
+    assert "75" in strategy.person_one.rationale
+    assert (
+        "aumento di peso" in strategy.person_two.focus.lower()
+        or "recupero energetico" in strategy.person_two.focus.lower()
+    )
+    assert strategy.person_two.daily_kcal_target > baseline_strategy.person_two.daily_kcal_target
+    assert "68" in strategy.person_two.rationale
+
+
+def test_strategy_prompt_preview_contains_system_and_payload() -> None:
+    preview = build_strategy_prompt_preview(build_request())
+
+    assert "=== SYSTEM PROMPT ===" in preview
+    assert "=== USER PROMPT ===" in preview
+    assert "Analizza il seguente profilo di coppia" in preview
+    assert '"person_one"' in preview
+
+
+def test_plan_prompt_preview_contains_strategy_payload() -> None:
+    request = build_request()
+    strategy = generate_fallback_wellness_strategy(request)
+
+    preview = build_plan_prompt_preview(request, strategy)
+
+    assert "=== SYSTEM PROMPT ===" in preview
+    assert "Costruisci un piano alimentare settimanale" in preview
+    assert "Strategia benessere approvata:" in preview
+    assert strategy.title in preview
 
 
 def test_markdown_and_metrics_are_populated() -> None:

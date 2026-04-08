@@ -68,6 +68,7 @@ class PersonProfile:
     sex: str = ""
     height_cm: int | None = None
     weight_kg: float | None = None
+    target_weight_kg: float | None = None
     activity_summary: str = ""
     daily_kcal: int | None = None
     protein_target: int | None = None
@@ -77,6 +78,9 @@ class PersonProfile:
     @classmethod
     def from_dict(cls, raw: Any) -> "PersonProfile":
         payload = raw if isinstance(raw, dict) else {}
+        target_weight_raw = payload.get("target_weight_kg")
+        if target_weight_raw in (None, ""):
+            target_weight_raw = payload.get("weight_kg")
         return cls(
             name=str(payload.get("name") or "Persona").strip() or "Persona",
             dietary_style=str(payload.get("dietary_style") or "Onnivoro").strip() or "Onnivoro",
@@ -84,6 +88,7 @@ class PersonProfile:
             sex=str(payload.get("sex") or "").strip(),
             height_cm=_coerce_int(payload.get("height_cm")),
             weight_kg=_coerce_float(payload.get("weight_kg")),
+            target_weight_kg=_coerce_float(target_weight_raw),
             activity_summary=str(payload.get("activity_summary") or "").strip(),
             daily_kcal=_coerce_int(payload.get("daily_kcal")),
             protein_target=_coerce_int(payload.get("protein_target")),

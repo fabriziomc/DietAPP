@@ -24,7 +24,7 @@ from dietapp.auth import (
     verify_auth_link,
 )
 from dietapp.config import AppConfig
-from dietapp.defaults import CUISINE_OPTIONS, PANTRY_OPTIONS
+from dietapp.defaults import CUISINE_OPTIONS, DAYS, PANTRY_OPTIONS
 from dietapp.formatters import compute_plan_metrics, plan_to_markdown
 from dietapp.models import HouseholdPreferences, PersonProfile, PlanningRequest, WeeklyPlan, WellnessStrategy
 from dietapp.persistence import (
@@ -37,7 +37,14 @@ from dietapp.persistence import (
     save_profile_form_values,
     save_profile_form_values_to_supabase,
 )
-from dietapp.planner import DietResult, StrategyResult, generate_diet_from_strategy, generate_wellness_strategy
+from dietapp.planner import (
+    DietResult,
+    StrategyResult,
+    build_plan_prompt_preview,
+    build_strategy_prompt_preview,
+    generate_diet_from_strategy,
+    generate_wellness_strategy,
+)
 
 
 st.set_page_config(
@@ -323,35 +330,59 @@ def describe_person_profile(person: PersonProfile) -> str:
         parts.append(f"{person.height_cm} cm")
     if person.weight_kg is not None:
         parts.append(format_weight(person.weight_kg))
+    if person.target_weight_kg is not None and person.weight_kg is not None:
+        weight_delta = person.target_weight_kg - person.weight_kg
+        if abs(weight_delta) >= 0.5:
+            direction_label = "dimagrimento" if weight_delta < 0 else "aumento"
+            parts.append(f"target {format_weight(person.target_weight_kg)} ({direction_label})")
     return " | ".join(parts) if parts else "Profilo non completo"
 
 
+def build_weight_goal_summary(*people: PersonProfile) -> str:
+    goals: list[str] = []
+    for person in people:
+        if person.target_weight_kg is None or person.weight_kg is None:
+            continue
+        weight_delta = person.target_weight_kg - person.weight_kg
+        if abs(weight_delta) < 0.5:
+            goals.append(f"{person.name}: mantenimento del peso")
+        elif weight_delta < 0:
+            goals.append(f"{person.name}: dimagrimento verso {format_weight(person.target_weight_kg)}")
+        else:
+            goals.append(f"{person.name}: aumento di peso verso {format_weight(person.target_weight_kg)}")
+    return "; ".join(goals)
+
+
 def build_request_payload(form_values: dict[str, object]) -> PlanningRequest:
+    person_one = PersonProfile(
+        name=str(form_values["person_one_name"]).strip() or "Persona 1",
+        dietary_style=str(form_values["person_one_style"]),
+        age=int(form_values["person_one_age"]),
+        sex=str(form_values["person_one_sex"]),
+        height_cm=int(form_values["person_one_height_cm"]),
+        weight_kg=float(form_values["person_one_weight_kg"]),
+        target_weight_kg=float(form_values["person_one_target_weight_kg"]),
+        activity_summary=str(form_values["person_one_activity"]).strip(),
+        dislikes=csv_to_list(str(form_values["person_one_dislikes"])),
+        allergies=csv_to_list(str(form_values["person_one_allergies"])),
+    )
+    person_two = PersonProfile(
+        name=str(form_values["person_two_name"]).strip() or "Persona 2",
+        dietary_style=str(form_values["person_two_style"]),
+        age=int(form_values["person_two_age"]),
+        sex=str(form_values["person_two_sex"]),
+        height_cm=int(form_values["person_two_height_cm"]),
+        weight_kg=float(form_values["person_two_weight_kg"]),
+        target_weight_kg=float(form_values["person_two_target_weight_kg"]),
+        activity_summary=str(form_values["person_two_activity"]).strip(),
+        dislikes=csv_to_list(str(form_values["person_two_dislikes"])),
+        allergies=csv_to_list(str(form_values["person_two_allergies"])),
+    )
     return PlanningRequest(
-        person_one=PersonProfile(
-            name=str(form_values["person_one_name"]).strip() or "Persona 1",
-            dietary_style=str(form_values["person_one_style"]),
-            age=int(form_values["person_one_age"]),
-            sex=str(form_values["person_one_sex"]),
-            height_cm=int(form_values["person_one_height_cm"]),
-            weight_kg=float(form_values["person_one_weight_kg"]),
-            activity_summary=str(form_values["person_one_activity"]).strip(),
-            dislikes=csv_to_list(str(form_values["person_one_dislikes"])),
-            allergies=csv_to_list(str(form_values["person_one_allergies"])),
-        ),
-        person_two=PersonProfile(
-            name=str(form_values["person_two_name"]).strip() or "Persona 2",
-            dietary_style=str(form_values["person_two_style"]),
-            age=int(form_values["person_two_age"]),
-            sex=str(form_values["person_two_sex"]),
-            height_cm=int(form_values["person_two_height_cm"]),
-            weight_kg=float(form_values["person_two_weight_kg"]),
-            activity_summary=str(form_values["person_two_activity"]).strip(),
-            dislikes=csv_to_list(str(form_values["person_two_dislikes"])),
-            allergies=csv_to_list(str(form_values["person_two_allergies"])),
-        ),
+        person_one=person_one,
+        person_two=person_two,
         preferences=HouseholdPreferences(
-            goal="",
+            goal=build_weight_goal_summary(person_one, person_two),
             budget=str(form_values["budget"]),
             max_prep_minutes=int(form_values["max_prep_minutes"]),
             leftover_lunches=int(form_values["leftover_lunches"]),
@@ -560,9 +591,36 @@ def render_prep(plan: WeeklyPlan) -> None:
     )
 
 
+def render_prompt_preview_toggle(
+    button_label: str,
+    session_key: str,
+    prompt_text: str,
+    source_label: str,
+    warning: str | None,
+    local_only_message: str,
+) -> None:
+    if st.button(button_label, key=f"{session_key}-toggle", use_container_width=True):
+        st.session_state[session_key] = not st.session_state.get(session_key, False)
+
+    if not st.session_state.get(session_key, False):
+        return
+
+    if source_label == "Planner locale":
+        if warning:
+            st.info(
+                "Il planner locale e intervenuto dopo un tentativo AI non riuscito. Qui sotto trovi il prompt costruito per quella richiesta."
+            )
+        else:
+            st.info(local_only_message)
+
+    st.code(prompt_text)
+
+
 def clear_planning_state() -> None:
     for session_key in ("strategy_result", "diet_result", "request_payload"):
         st.session_state[session_key] = None
+    for session_key in ("show_strategy_prompt", "show_diet_prompt"):
+        st.session_state[session_key] = False
 
 
 def persist_planning_state(
@@ -807,7 +865,7 @@ if auth_session is not None and auth_client is not None:
 style_options = ["Onnivoro", "Vegetariano"]
 sex_options = ["Uomo", "Donna", "Altro / Non specificato"]
 budget_options = ["Essenziale", "Bilanciato", "Premium"]
-batch_day_options = ["Domenica", "Lunedi", "Martedi", "Mercoledi"]
+batch_day_options = [DAYS[-1], *DAYS[:-1]]
 
 st.markdown("<div class='section-label'>Motore e memoria</div>", unsafe_allow_html=True)
 if base_config.get_api_key():
@@ -817,7 +875,7 @@ if base_config.get_api_key():
 else:
     st.info("Nessuna chiave AI valida trovata nel file .env: usero il planner locale.")
 st.caption(
-    f"Il profilo della coppia si salva in {profile_storage_label}. Eta, sesso, altezza, peso e attivita guidano prima la strategia benessere e poi il piano alimentare; con Supabase attivo vengono ricaricati anche strategia e piano compatibili con il profilo corrente."
+    f"Il profilo della coppia si salva in {profile_storage_label}. Eta, sesso, altezza, peso, obiettivo peso e attivita guidano prima la strategia benessere e poi il piano alimentare; con Supabase attivo vengono ricaricati anche strategia e piano compatibili con il profilo corrente."
 )
 
 if not base_config.has_supabase():
@@ -863,6 +921,15 @@ with st.form("planner-form", clear_on_submit=False):
             value=float(form_defaults["person_one_weight_kg"]),
             step=0.5,
             format="%.1f",
+        )
+        person_one_target_weight_kg = st.number_input(
+            "Obiettivo peso persona 1 (kg)",
+            min_value=35.0,
+            max_value=250.0,
+            value=float(form_defaults["person_one_target_weight_kg"]),
+            step=0.5,
+            format="%.1f",
+            help="Se uguale al peso attuale indica mantenimento; se piu basso o piu alto segnala dimagrimento o aumento di peso.",
         )
         person_one_activity = st.text_area(
             "Attivita motoria persona 1",
@@ -913,6 +980,15 @@ with st.form("planner-form", clear_on_submit=False):
             value=float(form_defaults["person_two_weight_kg"]),
             step=0.5,
             format="%.1f",
+        )
+        person_two_target_weight_kg = st.number_input(
+            "Obiettivo peso persona 2 (kg)",
+            min_value=35.0,
+            max_value=250.0,
+            value=float(form_defaults["person_two_target_weight_kg"]),
+            step=0.5,
+            format="%.1f",
+            help="Se uguale al peso attuale indica mantenimento; se piu basso o piu alto segnala dimagrimento o aumento di peso.",
         )
         person_two_activity = st.text_area(
             "Attivita motoria persona 2",
@@ -999,6 +1075,7 @@ form_values = {
     "person_one_sex": person_one_sex,
     "person_one_height_cm": person_one_height_cm,
     "person_one_weight_kg": person_one_weight_kg,
+    "person_one_target_weight_kg": person_one_target_weight_kg,
     "person_one_activity": person_one_activity,
     "person_one_dislikes": person_one_dislikes,
     "person_one_allergies": person_one_allergies,
@@ -1008,6 +1085,7 @@ form_values = {
     "person_two_sex": person_two_sex,
     "person_two_height_cm": person_two_height_cm,
     "person_two_weight_kg": person_two_weight_kg,
+    "person_two_target_weight_kg": person_two_target_weight_kg,
     "person_two_activity": person_two_activity,
     "person_two_dislikes": person_two_dislikes,
     "person_two_allergies": person_two_allergies,
@@ -1125,6 +1203,15 @@ if strategy_result and request_payload:
 
     st.markdown("<div class='section-label'>Strategia benessere</div>", unsafe_allow_html=True)
     render_wellness_strategy(strategy_result.strategy, request_payload)
+    strategy_prompt_preview = build_strategy_prompt_preview(request_payload)
+    render_prompt_preview_toggle(
+        "Mostra prompt completo strategia AI",
+        "show_strategy_prompt",
+        strategy_prompt_preview,
+        strategy_result.source_label,
+        strategy_result.warning,
+        "In questa esecuzione non e stata fatta una chiamata AI per la strategia. Qui sotto trovi comunque il prompt che l'app costruirebbe con questi dati.",
+    )
 
     st.markdown("<div class='section-label'>Passo successivo</div>", unsafe_allow_html=True)
     strategy_action_col, source_col = st.columns([1.2, 1])
@@ -1169,6 +1256,15 @@ if strategy_result and request_payload:
             st.warning(diet_result.warning)
 
         st.markdown("<div class='section-label'>Dieta settimanale</div>", unsafe_allow_html=True)
+        diet_prompt_preview = build_plan_prompt_preview(request_payload, strategy_result.strategy)
+        render_prompt_preview_toggle(
+            "Mostra prompt completo dieta AI",
+            "show_diet_prompt",
+            diet_prompt_preview,
+            diet_result.source_label,
+            diet_result.warning,
+            "In questa esecuzione non e stata fatta una chiamata AI per la dieta. Qui sotto trovi comunque il prompt che l'app costruirebbe con questi dati e con la strategia approvata.",
+        )
         metrics = compute_plan_metrics(diet_result.plan)
         combined_source = build_source_label(strategy_result.source_label, diet_result.source_label)
         metric_cols = st.columns(4)
