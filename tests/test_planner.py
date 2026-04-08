@@ -399,11 +399,13 @@ def test_call_llm_json_sets_openrouter_headers(monkeypatch) -> None:
         "HTTP-Referer": "https://dietapp.example",
         "X-OpenRouter-Title": "DietAPP",
     }
-    assert captured_request_kwargs["models"] == [
-        "meta-llama/llama-3.3-70b-instruct:free",
-        "qwen/qwen3-next-80b-a3b-instruct:free",
-    ]
-    assert captured_request_kwargs["route"] == "fallback"
+    assert captured_request_kwargs["extra_body"] == {
+        "models": [
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "qwen/qwen3-next-80b-a3b-instruct:free",
+        ],
+        "route": "fallback",
+    }
 
 
 def test_strategy_uses_groq_when_openrouter_provider_fails(monkeypatch) -> None:

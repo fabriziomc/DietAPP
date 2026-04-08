@@ -552,8 +552,10 @@ def _call_llm_json(
         request_kwargs["max_tokens"] = max_tokens
     model_fallbacks = config.get_model_fallbacks(provider)
     if model_fallbacks:
-        request_kwargs["models"] = list(model_fallbacks)
-        request_kwargs["route"] = "fallback"
+        request_kwargs["extra_body"] = {
+            "models": list(model_fallbacks),
+            "route": "fallback",
+        }
 
     response = client.chat.completions.create(
         **request_kwargs,
