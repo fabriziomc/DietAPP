@@ -310,6 +310,83 @@ def test_ai_plan_normalization_fills_missing_last_day_from_fallback() -> None:
     assert sunday.dinner.person_two.prep_notes
 
 
+def test_ai_plan_normalization_replaces_duplicate_full_days_with_fallback() -> None:
+    request = build_request()
+    strategy = generate_fallback_wellness_strategy(request)
+    repeated_day = {
+        "day": "Lunedi",
+        "breakfast": {
+            "shared_base": "Colazione ripetuta",
+            "person_one": {
+                "title": "Toast uno",
+                "description": "Sempre uguale",
+                "ingredients": ["pane", "uova"],
+                "prep_notes": "5 min",
+            },
+            "person_two": {
+                "title": "Toast due",
+                "description": "Sempre uguale",
+                "ingredients": ["pane", "ricotta"],
+                "prep_notes": "5 min",
+            },
+            "prep_minutes": 5,
+            "leftover_friendly": False,
+            "reuse_from_previous": "",
+            "kitchen_load": "Molto basso",
+        },
+        "lunch": {
+            "shared_base": "Pranzo ripetuto",
+            "person_one": {
+                "title": "Bowl uno",
+                "description": "Sempre uguale",
+                "ingredients": ["riso", "pollo"],
+                "prep_notes": "10 min",
+            },
+            "person_two": {
+                "title": "Bowl due",
+                "description": "Sempre uguale",
+                "ingredients": ["riso", "ceci"],
+                "prep_notes": "10 min",
+            },
+            "prep_minutes": 10,
+            "leftover_friendly": False,
+            "reuse_from_previous": "",
+            "kitchen_load": "Basso",
+        },
+        "dinner": {
+            "shared_base": "Cena ripetuta",
+            "person_one": {
+                "title": "Cena uno",
+                "description": "Sempre uguale",
+                "ingredients": ["pasta", "pollo"],
+                "prep_notes": "20 min",
+            },
+            "person_two": {
+                "title": "Cena due",
+                "description": "Sempre uguale",
+                "ingredients": ["pasta", "mozzarella"],
+                "prep_notes": "20 min",
+            },
+            "prep_minutes": 20,
+            "leftover_friendly": True,
+            "reuse_from_previous": "",
+            "kitchen_load": "Medio",
+        },
+    }
+    raw_plan = {
+        "title": "Piano AI ripetitivo",
+        "strategy": "Strategia AI",
+        "days": [repeated_day.copy() for _ in range(7)],
+    }
+
+    plan = _normalize_ai_plan(raw_plan, request, strategy, "Groq | test")
+
+    assert plan.days[0].breakfast.shared_base == "Colazione ripetuta"
+    assert plan.days[1].breakfast.shared_base != "Colazione ripetuta"
+    assert plan.days[1].lunch.shared_base != "Pranzo ripetuto"
+    assert plan.days[1].dinner.shared_base != "Cena ripetuta"
+
+
 def test_fallback_plan_excludes_blocked_ingredient_aliases() -> None:
     request = build_request()
     request.person_two.allergies = ["frutta secca"]

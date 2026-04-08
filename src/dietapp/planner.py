@@ -622,6 +622,7 @@ Strategia benessere approvata:
 Regole:
 - La strategia sopra e il punto di partenza: i pasti devono rispettare focus, target derivati e linee guida di ciascuna persona.
 - Genera sempre 7 giorni, da Lunedi a Domenica.
+- Evita di ripetere la stessa combinazione completa di colazione, pranzo e cena in giorni diversi: la settimana deve avere una rotazione credibile.
 - Le ricette devono essere concrete e riconoscibili come cucina italiana domestica o tradizione regionale italiana alleggerita.
 - Minimizza il lavoro in cucina con basi comuni, batch cooking, ingredienti ripetuti e avanzi intelligenti.
 - Usa gli stessi nomi presenti nel payload per person_one e person_two.
@@ -720,6 +721,8 @@ def _normalize_ai_plan(
             )
         )
 
+    days = _replace_duplicate_ai_days(days, fallback_plan.days)
+
     shopping_list = _normalize_shopping_list(raw_plan.get("shopping_list"))
     if not shopping_list:
         shopping_list = fallback_plan.shopping_list
@@ -784,6 +787,44 @@ def _normalize_meal_variant(raw: Any, fallback_variant: MealVariant) -> MealVari
         description=str(raw.get("description") or fallback_variant.description),
         ingredients=_to_string_list(raw.get("ingredients")) or list(fallback_variant.ingredients),
         prep_notes=str(raw.get("prep_notes") or fallback_variant.prep_notes),
+    )
+
+
+def _replace_duplicate_ai_days(days: list[DayPlan], fallback_days: list[DayPlan]) -> list[DayPlan]:
+    resolved_days: list[DayPlan] = []
+    seen_signatures: set[tuple[Any, ...]] = set()
+
+    for index, day in enumerate(days):
+        day_signature = _day_menu_signature(day)
+        if day_signature in seen_signatures and index < len(fallback_days):
+            fallback_day = fallback_days[index]
+            fallback_signature = _day_menu_signature(fallback_day)
+            if fallback_signature not in seen_signatures:
+                resolved_days.append(fallback_day)
+                seen_signatures.add(fallback_signature)
+                continue
+
+        resolved_days.append(day)
+        seen_signatures.add(day_signature)
+
+    return resolved_days
+
+
+def _day_menu_signature(day: DayPlan) -> tuple[Any, ...]:
+    return (
+        _meal_menu_signature(day.breakfast),
+        _meal_menu_signature(day.lunch),
+        _meal_menu_signature(day.dinner),
+    )
+
+
+def _meal_menu_signature(meal: MealSlot) -> tuple[Any, ...]:
+    return (
+        meal.shared_base.strip().lower(),
+        meal.person_one.title.strip().lower(),
+        tuple(sorted(item.strip().lower() for item in meal.person_one.ingredients)),
+        meal.person_two.title.strip().lower(),
+        tuple(sorted(item.strip().lower() for item in meal.person_two.ingredients)),
     )
 
 
