@@ -568,6 +568,45 @@ Restituisci JSON con questo schema esatto:
 """.strip()
 
 
+def _build_plan_day_schema_prompt(day_name: str) -> str:
+        return f"""
+        {{
+            "day": "{day_name}",
+            "breakfast": {{
+                "shared_base": "string",
+                "person_one": {{"title": "string", "description": "string", "ingredients": ["string"], "prep_notes": "string"}},
+                "person_two": {{"title": "string", "description": "string", "ingredients": ["string"], "prep_notes": "string"}},
+                "prep_minutes": 10,
+                "leftover_friendly": false,
+                "reuse_from_previous": "string",
+                "kitchen_load": "Basso"
+            }},
+            "lunch": {{
+                "shared_base": "string",
+                "person_one": {{"title": "string", "description": "string", "ingredients": ["string"], "prep_notes": "string"}},
+                "person_two": {{"title": "string", "description": "string", "ingredients": ["string"], "prep_notes": "string"}},
+                "prep_minutes": 10,
+                "leftover_friendly": true,
+                "reuse_from_previous": "string",
+                "kitchen_load": "Basso"
+            }},
+            "dinner": {{
+                "shared_base": "string",
+                "person_one": {{"title": "string", "description": "string", "ingredients": ["string"], "prep_notes": "string"}},
+                "person_two": {{"title": "string", "description": "string", "ingredients": ["string"], "prep_notes": "string"}},
+                "prep_minutes": 25,
+                "leftover_friendly": true,
+                "reuse_from_previous": "string",
+                "kitchen_load": "Medio"
+            }}
+        }}
+        """.strip()
+
+
+def _build_plan_days_schema_prompt() -> str:
+        return ",\n".join(_build_plan_day_schema_prompt(day_name) for day_name in DAYS)
+
+
 def _build_plan_ai_prompt(request: PlanningRequest, strategy: WellnessStrategy) -> str:
     payload = request.to_dict()
     strategy_payload = strategy.to_dict()
@@ -607,36 +646,7 @@ Restituisci JSON con questo schema esatto:
     "Frigo": ["string"]
   }},
   "days": [
-    {{
-      "day": "Lunedi",
-      "breakfast": {{
-        "shared_base": "string",
-        "person_one": {{"title": "string", "description": "string", "ingredients": ["string"], "prep_notes": "string"}},
-        "person_two": {{"title": "string", "description": "string", "ingredients": ["string"], "prep_notes": "string"}},
-        "prep_minutes": 10,
-        "leftover_friendly": false,
-        "reuse_from_previous": "string",
-        "kitchen_load": "Basso"
-      }},
-      "lunch": {{
-        "shared_base": "string",
-        "person_one": {{"title": "string", "description": "string", "ingredients": ["string"], "prep_notes": "string"}},
-        "person_two": {{"title": "string", "description": "string", "ingredients": ["string"], "prep_notes": "string"}},
-        "prep_minutes": 10,
-        "leftover_friendly": true,
-        "reuse_from_previous": "string",
-        "kitchen_load": "Basso"
-      }},
-      "dinner": {{
-        "shared_base": "string",
-        "person_one": {{"title": "string", "description": "string", "ingredients": ["string"], "prep_notes": "string"}},
-        "person_two": {{"title": "string", "description": "string", "ingredients": ["string"], "prep_notes": "string"}},
-        "prep_minutes": 25,
-        "leftover_friendly": true,
-        "reuse_from_previous": "string",
-        "kitchen_load": "Medio"
-      }}
-    }}
+{_build_plan_days_schema_prompt()}
   ]
 }}
 """.strip()

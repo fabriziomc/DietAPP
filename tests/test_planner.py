@@ -249,6 +249,8 @@ def test_plan_prompt_preview_contains_strategy_payload() -> None:
     assert "Costruisci un piano alimentare settimanale" in preview
     assert "Strategia benessere approvata:" in preview
     assert strategy.title in preview
+    for day_name in ("Lunedi", "Martedi", "Mercoledi", "Giovedi", "Venerdi", "Sabato", "Domenica"):
+        assert f'"day": "{day_name}"' in preview
 
 
 def test_markdown_and_metrics_are_populated() -> None:
