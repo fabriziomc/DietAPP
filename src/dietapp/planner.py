@@ -47,6 +47,10 @@ Do not include markdown fences.
 """.strip()
 
 
+AI_STRATEGY_MAX_TOKENS = 2500
+AI_PLAN_MAX_TOKENS = 7000
+
+
 KEYWORD_BUCKETS = {
     "Proteine": [
         "pollo",
@@ -461,7 +465,12 @@ def generate_fallback_plan(
 
 
 def _generate_ai_wellness_strategy(request: PlanningRequest, config: AppConfig) -> WellnessStrategy:
-    raw_strategy = _call_llm_json(config, STRATEGY_SYSTEM_PROMPT, _build_strategy_ai_prompt(request))
+    raw_strategy = _call_llm_json(
+        config,
+        STRATEGY_SYSTEM_PROMPT,
+        _build_strategy_ai_prompt(request),
+        max_tokens=AI_STRATEGY_MAX_TOKENS,
+    )
     return _normalize_wellness_strategy(
         raw_strategy,
         request,
@@ -474,7 +483,12 @@ def _generate_ai_plan(
     strategy: WellnessStrategy,
     config: AppConfig,
 ) -> WeeklyPlan:
-    raw_plan = _call_llm_json(config, PLAN_SYSTEM_PROMPT, _build_plan_ai_prompt(request, strategy))
+    raw_plan = _call_llm_json(
+        config,
+        PLAN_SYSTEM_PROMPT,
+        _build_plan_ai_prompt(request, strategy),
+        max_tokens=AI_PLAN_MAX_TOKENS,
+    )
     return _normalize_ai_plan(
         raw_plan,
         request,
@@ -483,7 +497,12 @@ def _generate_ai_plan(
     )
 
 
-def _call_llm_json(config: AppConfig, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+def _call_llm_json(
+    config: AppConfig,
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: int | None = None,
+) -> dict[str, Any]:
     if OpenAI is None:
         raise RuntimeError("pacchetto openai non installato")
 
@@ -491,16 +510,25 @@ def _call_llm_json(config: AppConfig, system_prompt: str, user_prompt: str) -> d
     base_url = config.get_base_url()
     if base_url:
         client_kwargs["base_url"] = base_url
+    default_headers = config.get_default_headers()
+    if default_headers:
+        client_kwargs["default_headers"] = default_headers
 
     client = OpenAI(**client_kwargs)
-    response = client.chat.completions.create(
-        model=config.get_model(),
-        temperature=0.4,
-        response_format={"type": "json_object"},
-        messages=[
+    request_kwargs: dict[str, Any] = {
+        "model": config.get_model(),
+        "temperature": 0.4,
+        "response_format": {"type": "json_object"},
+        "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
+    }
+    if max_tokens is not None:
+        request_kwargs["max_tokens"] = max_tokens
+
+    response = client.chat.completions.create(
+        **request_kwargs,
     )
     content = response.choices[0].message.content or "{}"
     return json.loads(content)
@@ -623,12 +651,15 @@ Strategia benessere approvata:
 Regole:
 - La strategia sopra e il punto di partenza: i pasti devono rispettare focus, target derivati e linee guida di ciascuna persona.
 - Genera sempre 7 giorni, da Lunedi a Domenica.
+- Il JSON e valido solo se contiene esattamente 7 oggetti in "days", ciascuno con breakfast, lunch e dinner valorizzati; non fermarti a 5 o 6 giorni e non usare null nei pasti.
+- L'ultimo oggetto di "days" deve essere Domenica.
 - Evita di ripetere la stessa combinazione completa di colazione, pranzo e cena in giorni diversi: la settimana deve avere una rotazione credibile.
 - Le ricette devono essere concrete e riconoscibili come cucina italiana domestica o tradizione regionale italiana alleggerita.
 - Minimizza il lavoro in cucina con basi comuni, batch cooking, ingredienti ripetuti e avanzi intelligenti.
 - Usa gli stessi nomi presenti nel payload per person_one e person_two.
 - Se allow_protein_powder=true, puoi usare proteine in polvere solo in modo sobrio, massimo una porzione al giorno e solo quando aiutano davvero il target proteico.
 - Se allow_protein_powder=false, evita di inserirle nel piano per quella persona.
+- Mantieni shared_base, description e prep_notes brevi e operativi; ogni ingredients deve avere al massimo 6 elementi davvero usati nel piatto.
 - Mantieni le cene entro il tempo massimo richiesto quando possibile.
 - Evita ingredienti esclusi, allergie e cibi non graditi.
 - Usa budget e cucine preferite per orientare la scelta degli ingredienti, ma resta in un perimetro di ricette italiane.

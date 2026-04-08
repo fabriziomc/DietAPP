@@ -10,7 +10,7 @@ Applicazione web in Python + Streamlit per pianificare la dieta settimanale di u
 - cerca di riusare basi comuni tra versione onnivora e vegetariana
 - privilegia batch cooking, avanzi intelligenti e ingredienti ricorrenti
 - produce una lista della spesa aggregata
-- usa i valori del file `.env` per OpenAI o Groq, altrimenti passa a un planner locale deterministico con ricette italiane
+- usa i valori del file `.env` per OpenAI, Groq o OpenRouter, altrimenti passa a un planner locale deterministico con ricette italiane
 - puo salvare localmente il profilo della coppia e ricaricarlo ai successivi avvii
 
 ## Avvio rapido
@@ -30,14 +30,43 @@ Se vuoi usare il generatore AI:
 1. imposta `AI_PROVIDER=openai` oppure `AI_PROVIDER=groq` nel file `.env`
 2. se usi OpenAI compila `OPENAI_API_KEY` e opzionalmente `OPENAI_MODEL`
 3. se usi Groq compila `GROQ_API_KEY` e opzionalmente `GROQ_MODEL`
+4. se usi OpenRouter compila `OPENROUTER_API_KEY` e opzionalmente `OPENROUTER_MODEL`
+
+Esempio OpenRouter con modello gratuito:
+
+```dotenv
+AI_PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-...
+OPENROUTER_MODEL=google/gemma-4-31b-it:free
+OPENROUTER_SITE_URL=https://tuo-app.streamlit.app
+OPENROUTER_APP_NAME=DietAPP
+```
+
+`OPENROUTER_SITE_URL` e `OPENROUTER_APP_NAME` sono opzionali ma consigliati: vengono inviati come header `HTTP-Referer` e `X-OpenRouter-Title` nelle richieste API.
 
 Modelli consigliati su Groq per questa app:
 
 - `llama-3.3-70b-versatile`: scelta migliore per qualita e aderenza al JSON
 - `llama-3.1-8b-instant`: scelta migliore per velocita e costo ridotto
 
+Modelli OpenRouter sensati per iniziare:
+
+- `google/gemma-4-31b-it:free`: buon punto di partenza per test e fallback a costo zero
+- `google/gemma-4-26b-a4b-it:free`: alternativa gratuita spesso piu leggera
+
 Se la chiave non e presente, l'app resta comunque utilizzabile tramite il planner locale.
 Il planner locale ora filtra gli ingredienti esclusi, usa davvero budget e cucine preferite per ordinare i template, mantiene le proposte in un perimetro di ricette italiane domestiche e, nei casi piu stretti, prova a sostituire automaticamente gli ingredienti vietati con equivalenti compatibili.
+
+## Come registrarsi a OpenRouter
+
+1. vai su `https://openrouter.ai/` e crea un account
+2. entra nella dashboard e genera una API key personale
+3. scegli un modello, per esempio `google/gemma-4-31b-it:free` se vuoi partire dal tier gratuito
+4. copia la chiave nel file `.env` come `OPENROUTER_API_KEY`
+5. imposta `AI_PROVIDER=openrouter`
+6. se l'app e pubblicata, aggiungi anche `OPENROUTER_SITE_URL` con l'URL pubblico della tua app e lascia `OPENROUTER_APP_NAME=DietAPP`
+
+Nota pratica: i modelli gratuiti su OpenRouter possono avere disponibilita e rate limit variabili nel tempo, quindi conviene tenerlo come provider alternativo accanto a Groq invece che come unica dipendenza.
 
 ## Accesso riservato e profili cloud
 

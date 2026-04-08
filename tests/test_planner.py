@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import dietapp.planner as planner_module
 from dietapp.config import AppConfig
 from dietapp.formatters import compute_plan_metrics, plan_to_markdown
 from dietapp.models import HouseholdPreferences, PersonProfile, PlanningRequest
@@ -111,6 +112,25 @@ def test_groq_config_exposes_base_url_and_model() -> None:
     assert config.get_base_url() == "https://api.groq.com/openai/v1"
 
 
+def test_openrouter_config_exposes_base_url_model_and_headers() -> None:
+    config = AppConfig(
+        ai_provider="openrouter",
+        openrouter_api_key="test-openrouter-key",
+        openrouter_model="google/gemma-4-31b-it:free",
+        openrouter_site_url="https://dietapp.example",
+        openrouter_app_name="DietAPP",
+    )
+
+    assert config.get_provider_label() == "OpenRouter"
+    assert config.get_api_key() == "test-openrouter-key"
+    assert config.get_model() == "google/gemma-4-31b-it:free"
+    assert config.get_base_url() == "https://openrouter.ai/api/v1"
+    assert config.get_default_headers() == {
+        "HTTP-Referer": "https://dietapp.example",
+        "X-OpenRouter-Title": "DietAPP",
+    }
+
+
 def test_config_falls_back_to_available_provider_key() -> None:
     config = AppConfig(
         ai_provider="openai",
@@ -122,6 +142,20 @@ def test_config_falls_back_to_available_provider_key() -> None:
     assert config.normalize_provider() == "groq"
     assert config.get_provider_label() == "Groq"
     assert config.get_model() == "llama-3.3-70b-versatile"
+
+
+def test_config_can_fall_back_to_openrouter_when_available() -> None:
+    config = AppConfig(
+        ai_provider="openai",
+        openai_api_key=None,
+        groq_api_key=None,
+        openrouter_api_key="test-openrouter-key",
+        openrouter_model="google/gemma-4-31b-it:free",
+    )
+
+    assert config.normalize_provider() == "openrouter"
+    assert config.get_provider_label() == "OpenRouter"
+    assert config.get_model() == "google/gemma-4-31b-it:free"
 
 
 def test_profile_values_are_persisted_locally(tmp_path: Path) -> None:
@@ -250,8 +284,78 @@ def test_plan_prompt_preview_contains_strategy_payload() -> None:
     assert "Costruisci un piano alimentare settimanale" in preview
     assert "Strategia benessere approvata:" in preview
     assert strategy.title in preview
+    assert 'Il JSON e valido solo se contiene esattamente 7 oggetti in "days"' in preview
+    assert "shared_base, description e prep_notes brevi e operativi" in preview
     for day_name in ("Lunedi", "Martedi", "Mercoledi", "Giovedi", "Venerdi", "Sabato", "Domenica"):
         assert f'"day": "{day_name}"' in preview
+
+
+def test_call_llm_json_passes_max_tokens(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    captured_client_kwargs: dict[str, object] = {}
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+
+            message = type("Message", (), {"content": '{"status": "ok"}'})()
+            choice = type("Choice", (), {"message": message})()
+            return type("Response", (), {"choices": [choice]})()
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured_client_kwargs.update(kwargs)
+            self.chat = type("Chat", (), {"completions": FakeCompletions()})()
+
+    monkeypatch.setattr(planner_module, "OpenAI", FakeClient)
+
+    payload = planner_module._call_llm_json(
+        AppConfig(ai_provider="groq", groq_api_key="test-key"),
+        "system",
+        "user",
+        max_tokens=7000,
+    )
+
+    assert payload == {"status": "ok"}
+    assert captured["max_tokens"] == 7000
+
+
+def test_call_llm_json_sets_openrouter_headers(monkeypatch) -> None:
+    captured_client_kwargs: dict[str, object] = {}
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            message = type("Message", (), {"content": '{"status": "ok"}'})()
+            choice = type("Choice", (), {"message": message})()
+            return type("Response", (), {"choices": [choice]})()
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured_client_kwargs.update(kwargs)
+            self.chat = type("Chat", (), {"completions": FakeCompletions()})()
+
+    monkeypatch.setattr(planner_module, "OpenAI", FakeClient)
+
+    payload = planner_module._call_llm_json(
+        AppConfig(
+            ai_provider="openrouter",
+            openrouter_api_key="test-openrouter-key",
+            openrouter_model="google/gemma-4-31b-it:free",
+            openrouter_site_url="https://dietapp.example",
+            openrouter_app_name="DietAPP",
+        ),
+        "system",
+        "user",
+        max_tokens=2000,
+    )
+
+    assert payload == {"status": "ok"}
+    assert captured_client_kwargs["api_key"] == "test-openrouter-key"
+    assert captured_client_kwargs["base_url"] == "https://openrouter.ai/api/v1"
+    assert captured_client_kwargs["default_headers"] == {
+        "HTTP-Referer": "https://dietapp.example",
+        "X-OpenRouter-Title": "DietAPP",
+    }
 
 
 def test_markdown_and_metrics_are_populated() -> None:
