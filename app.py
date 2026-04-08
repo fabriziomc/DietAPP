@@ -37,14 +37,44 @@ from dietapp.persistence import (
     save_profile_form_values,
     save_profile_form_values_to_supabase,
 )
-from dietapp.planner import (
-    DietResult,
-    StrategyResult,
-    build_plan_prompt_preview,
-    build_strategy_prompt_preview,
-    generate_diet_from_strategy,
-    generate_wellness_strategy,
-)
+import dietapp.planner as planner_module
+
+
+DietResult = planner_module.DietResult
+StrategyResult = planner_module.StrategyResult
+generate_diet_from_strategy = planner_module.generate_diet_from_strategy
+generate_wellness_strategy = planner_module.generate_wellness_strategy
+
+
+def build_strategy_prompt_preview(request: PlanningRequest) -> str:
+    prompt_builder = getattr(planner_module, "build_strategy_prompt_preview", None)
+    if callable(prompt_builder):
+        return prompt_builder(request)
+    return _format_prompt_preview(
+        planner_module.STRATEGY_SYSTEM_PROMPT,
+        planner_module._build_strategy_ai_prompt(request),
+    )
+
+
+def build_plan_prompt_preview(request: PlanningRequest, strategy: WellnessStrategy) -> str:
+    prompt_builder = getattr(planner_module, "build_plan_prompt_preview", None)
+    if callable(prompt_builder):
+        return prompt_builder(request, strategy)
+    return _format_prompt_preview(
+        planner_module.PLAN_SYSTEM_PROMPT,
+        planner_module._build_plan_ai_prompt(request, strategy),
+    )
+
+
+def _format_prompt_preview(system_prompt: str, user_prompt: str) -> str:
+    return "\n\n".join(
+        [
+            "=== SYSTEM PROMPT ===",
+            system_prompt,
+            "=== USER PROMPT ===",
+            user_prompt,
+        ]
+    )
 
 
 st.set_page_config(
