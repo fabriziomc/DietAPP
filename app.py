@@ -559,6 +559,14 @@ def render_meal_card(slot_label: str, meal, person_one_name: str, person_two_nam
     )
 
 
+def build_day_reuse_badge(day_plan) -> str:
+    if day_plan.lunch.reuse_from_previous:
+        return day_plan.lunch.reuse_from_previous
+    if day_plan.breakfast.reuse_from_previous:
+        return day_plan.breakfast.reuse_from_previous
+    return "rotazione smart"
+
+
 def render_day(day_plan, person_one_name: str, person_two_name: str) -> None:
     st.markdown(
         dedent(
@@ -566,7 +574,7 @@ def render_day(day_plan, person_one_name: str, person_two_name: str) -> None:
         <div class="day-shell">
             <div class="day-title">
                 <h3>{escape(day_plan.day)}</h3>
-                <div class="tag">Strategia: {escape(day_plan.dinner.reuse_from_previous or 'rotazione smart')}</div>
+                <div class="tag">Riutilizzo: {escape(build_day_reuse_badge(day_plan))}</div>
             </div>
         </div>
         """
