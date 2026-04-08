@@ -271,6 +271,12 @@ class DietResult:
     warning: str | None = None
 
 
+@dataclass(slots=True)
+class ProviderFailure:
+    source_label: str
+    message: str
+
+
 def generate_weekly_plan(request: PlanningRequest, config: AppConfig) -> PlanResult:
     strategy_result = generate_wellness_strategy(request, config)
     diet_result = generate_diet_from_strategy(request, strategy_result.strategy, config)
@@ -285,28 +291,33 @@ def generate_weekly_plan(request: PlanningRequest, config: AppConfig) -> PlanRes
 
 
 def generate_wellness_strategy(request: PlanningRequest, config: AppConfig) -> StrategyResult:
-    provider_name = config.get_provider_label()
-    model_name = config.get_model()
-    api_key = config.get_api_key()
-
-    if api_key:
+    failures: list[ProviderFailure] = []
+    for provider in config.get_provider_attempt_order():
         try:
-            strategy = _generate_ai_wellness_strategy(request, config)
-            return StrategyResult(strategy=strategy, source_label=f"{provider_name} | {model_name}")
-        except Exception as exc:
-            fallback_strategy = generate_fallback_wellness_strategy(request)
-            message = str(exc).strip() or "errore sconosciuto"
+            strategy = _generate_ai_wellness_strategy(request, config, provider)
+            source_label = _build_provider_source_label(config, provider)
             return StrategyResult(
-                strategy=fallback_strategy,
-                source_label="Planner locale",
-                warning=(
-                    f"La strategia benessere tramite {provider_name} non ha risposto correttamente "
-                    f"({message}). Ho usato il motore locale."
+                strategy=strategy,
+                source_label=source_label,
+                warning=_build_provider_recovery_warning(
+                    "Strategia benessere",
+                    failures,
+                    source_label,
                 ),
             )
+        except Exception as exc:
+            failures.append(_build_provider_failure(exc, config, provider))
 
     fallback_strategy = generate_fallback_wellness_strategy(request)
-    return StrategyResult(strategy=fallback_strategy, source_label="Planner locale")
+    return StrategyResult(
+        strategy=fallback_strategy,
+        source_label="Planner locale",
+        warning=_build_local_provider_warning(
+            "Strategia benessere",
+            failures,
+            "Ho usato il motore locale.",
+        ),
+    )
 
 
 def generate_diet_from_strategy(
@@ -314,29 +325,34 @@ def generate_diet_from_strategy(
     strategy: WellnessStrategy,
     config: AppConfig,
 ) -> DietResult:
-    provider_name = config.get_provider_label()
-    model_name = config.get_model()
-    api_key = config.get_api_key()
     enriched_request = _apply_strategy_targets(request, strategy)
-
-    if api_key:
+    failures: list[ProviderFailure] = []
+    for provider in config.get_provider_attempt_order():
         try:
-            plan = _generate_ai_plan(enriched_request, strategy, config)
-            return DietResult(plan=plan, source_label=f"{provider_name} | {model_name}")
-        except Exception as exc:
-            fallback_plan = generate_fallback_plan(enriched_request, strategy)
-            message = str(exc).strip() or "errore sconosciuto"
+            plan = _generate_ai_plan(enriched_request, strategy, config, provider)
+            source_label = _build_provider_source_label(config, provider)
             return DietResult(
-                plan=fallback_plan,
-                source_label="Planner locale",
-                warning=(
-                    f"La dieta settimanale tramite {provider_name} non ha risposto correttamente "
-                    f"({message}). Ho creato il piano con il motore locale."
+                plan=plan,
+                source_label=source_label,
+                warning=_build_provider_recovery_warning(
+                    "Dieta settimanale",
+                    failures,
+                    source_label,
                 ),
             )
+        except Exception as exc:
+            failures.append(_build_provider_failure(exc, config, provider))
 
     fallback_plan = generate_fallback_plan(enriched_request, strategy)
-    return DietResult(plan=fallback_plan, source_label="Planner locale")
+    return DietResult(
+        plan=fallback_plan,
+        source_label="Planner locale",
+        warning=_build_local_provider_warning(
+            "Dieta settimanale",
+            failures,
+            "Ho creato il piano con il motore locale.",
+        ),
+    )
 
 
 def generate_fallback_wellness_strategy(request: PlanningRequest) -> WellnessStrategy:
@@ -464,17 +480,22 @@ def generate_fallback_plan(
     )
 
 
-def _generate_ai_wellness_strategy(request: PlanningRequest, config: AppConfig) -> WellnessStrategy:
+def _generate_ai_wellness_strategy(
+    request: PlanningRequest,
+    config: AppConfig,
+    provider: str | None = None,
+) -> WellnessStrategy:
     raw_strategy = _call_llm_json(
         config,
         STRATEGY_SYSTEM_PROMPT,
         _build_strategy_ai_prompt(request),
         max_tokens=AI_STRATEGY_MAX_TOKENS,
+        provider=provider,
     )
     return _normalize_wellness_strategy(
         raw_strategy,
         request,
-        f"{config.get_provider_label()} | {config.get_model()}",
+        _build_provider_source_label(config, provider),
     )
 
 
@@ -482,18 +503,20 @@ def _generate_ai_plan(
     request: PlanningRequest,
     strategy: WellnessStrategy,
     config: AppConfig,
+    provider: str | None = None,
 ) -> WeeklyPlan:
     raw_plan = _call_llm_json(
         config,
         PLAN_SYSTEM_PROMPT,
         _build_plan_ai_prompt(request, strategy),
         max_tokens=AI_PLAN_MAX_TOKENS,
+        provider=provider,
     )
     return _normalize_ai_plan(
         raw_plan,
         request,
         strategy,
-        f"{config.get_provider_label()} | {config.get_model()}",
+        _build_provider_source_label(config, provider),
     )
 
 
@@ -502,21 +525,22 @@ def _call_llm_json(
     system_prompt: str,
     user_prompt: str,
     max_tokens: int | None = None,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     if OpenAI is None:
         raise RuntimeError("pacchetto openai non installato")
 
-    client_kwargs: dict[str, Any] = {"api_key": config.get_api_key()}
-    base_url = config.get_base_url()
+    client_kwargs: dict[str, Any] = {"api_key": config.get_api_key(provider)}
+    base_url = config.get_base_url(provider)
     if base_url:
         client_kwargs["base_url"] = base_url
-    default_headers = config.get_default_headers()
+    default_headers = config.get_default_headers(provider)
     if default_headers:
         client_kwargs["default_headers"] = default_headers
 
     client = OpenAI(**client_kwargs)
     request_kwargs: dict[str, Any] = {
-        "model": config.get_model(),
+        "model": config.get_model(provider),
         "temperature": 0.4,
         "response_format": {"type": "json_object"},
         "messages": [
@@ -526,12 +550,81 @@ def _call_llm_json(
     }
     if max_tokens is not None:
         request_kwargs["max_tokens"] = max_tokens
+    model_fallbacks = config.get_model_fallbacks(provider)
+    if model_fallbacks:
+        request_kwargs["models"] = list(model_fallbacks)
+        request_kwargs["route"] = "fallback"
 
     response = client.chat.completions.create(
         **request_kwargs,
     )
     content = response.choices[0].message.content or "{}"
     return json.loads(content)
+
+
+def _build_provider_source_label(config: AppConfig, provider: str | None = None) -> str:
+    return f"{config.get_provider_label(provider)} | {config.get_model(provider)}"
+
+
+def _build_provider_failure(exc: Exception, config: AppConfig, provider: str) -> ProviderFailure:
+    return ProviderFailure(
+        source_label=_build_provider_source_label(config, provider),
+        message=_format_provider_exception(exc, config, provider),
+    )
+
+
+def _summarize_provider_failures(failures: list[ProviderFailure]) -> str:
+    return " ".join(
+        f"{failure.source_label} non ha risposto correttamente ({failure.message})."
+        for failure in failures
+    )
+
+
+def _build_provider_recovery_warning(
+    subject: str,
+    failures: list[ProviderFailure],
+    success_source_label: str,
+) -> str | None:
+    if not failures:
+        return None
+    return (
+        f"{subject}: {_summarize_provider_failures(failures)} "
+        f"Ho usato {success_source_label} come fallback."
+    )
+
+
+def _build_local_provider_warning(
+    subject: str,
+    failures: list[ProviderFailure],
+    local_resolution: str,
+) -> str | None:
+    if not failures:
+        return None
+    return f"{subject}: {_summarize_provider_failures(failures)} {local_resolution}"
+
+
+def _format_provider_exception(exc: Exception, config: AppConfig, provider: str | None = None) -> str:
+    message = str(exc).strip() or "errore sconosciuto"
+    selected_provider = provider or config.normalize_provider()
+    if selected_provider != "openrouter":
+        return message
+
+    lowered = message.lower()
+    if "temporarily rate-limited upstream" in lowered or "rate limit" in lowered:
+        fallback_models = config.get_model_fallbacks()
+        fallback_hint = ""
+        if fallback_models:
+            fallback_hint = (
+                " Ho configurato fallback automatici su altri modelli OpenRouter; se anche quelli sono saturi, "
+                "puoi cambiare OPENROUTER_MODEL oppure personalizzare OPENROUTER_FALLBACK_MODELS."
+            )
+        return (
+            "il modello OpenRouter scelto e temporaneamente limitato sul provider upstream gratuito. "
+            "Riprova tra poco, usa un altro modello gratuito oppure collega una integrazione BYOK nel tuo account OpenRouter."
+            + fallback_hint
+        )
+
+    return message
 
 
 def build_strategy_prompt_preview(request: PlanningRequest) -> str:

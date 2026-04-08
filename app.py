@@ -325,6 +325,30 @@ def inject_styles() -> None:
             color: var(--terracotta);
         }
 
+        .provider-recovery-note {
+            display: flex;
+            align-items: center;
+            gap: 0.7rem;
+            flex-wrap: wrap;
+            margin: 0.75rem 0 0.2rem;
+            padding: 0.85rem 1rem;
+            border-radius: 18px;
+            background: rgba(44, 110, 73, 0.08);
+            border: 1px solid rgba(44, 110, 73, 0.15);
+        }
+
+        .provider-recovery-text {
+            color: var(--muted);
+            font-size: 0.92rem;
+            line-height: 1.4;
+        }
+
+        .tag-provider-recovery {
+            background: rgba(44, 110, 73, 0.14);
+            color: var(--green);
+            margin-right: 0;
+        }
+
         .shopping-card,
         .prep-card {
             padding: 1rem 1.1rem;
@@ -465,6 +489,41 @@ def render_metric(label: str, value: str, caption: str) -> None:
             <div class="metric-label">{escape(label)}</div>
             <div class="metric-value">{escape(value)}</div>
             <div class="metric-caption">{escape(caption)}</div>
+        </div>
+        """
+        ).strip(),
+        unsafe_allow_html=True,
+    )
+
+
+def build_provider_recovery_note(source_label: str, warning: str | None) -> tuple[str, str] | None:
+    if not warning or source_label == "Planner locale" or "come fallback" not in warning:
+        return None
+
+    if source_label.startswith("Groq |") and "OpenRouter |" in warning:
+        return (
+            "Fallback OpenRouter -> Groq",
+            "OpenRouter non ha risposto correttamente; questa risposta arriva da Groq invece che dal planner locale.",
+        )
+
+    return (
+        "Provider di recupero attivo",
+        f"Questa risposta arriva da {source_label} dopo un errore del provider tentato in precedenza.",
+    )
+
+
+def render_provider_recovery_note(source_label: str, warning: str | None) -> None:
+    note = build_provider_recovery_note(source_label, warning)
+    if note is None:
+        return
+
+    label, description = note
+    st.markdown(
+        dedent(
+            f"""
+        <div class="provider-recovery-note">
+            <span class="tag tag-provider-recovery">{escape(label)}</span>
+            <div class="provider-recovery-text">{escape(description)}</div>
         </div>
         """
         ).strip(),
@@ -1283,6 +1342,7 @@ request_payload: PlanningRequest | None = st.session_state.request_payload
 if strategy_result and request_payload:
     if strategy_result.warning:
         st.warning(strategy_result.warning)
+    render_provider_recovery_note(strategy_result.source_label, strategy_result.warning)
 
     st.markdown("<div class='section-label'>Strategia benessere</div>", unsafe_allow_html=True)
     render_wellness_strategy(strategy_result.strategy, request_payload)
@@ -1337,6 +1397,7 @@ if strategy_result and request_payload:
     if diet_result:
         if diet_result.warning:
             st.warning(diet_result.warning)
+        render_provider_recovery_note(diet_result.source_label, diet_result.warning)
 
         st.markdown("<div class='section-label'>Dieta settimanale</div>", unsafe_allow_html=True)
         diet_prompt_preview = build_plan_prompt_preview(request_payload, strategy_result.strategy)

@@ -117,6 +117,10 @@ def test_openrouter_config_exposes_base_url_model_and_headers() -> None:
         ai_provider="openrouter",
         openrouter_api_key="test-openrouter-key",
         openrouter_model="google/gemma-4-31b-it:free",
+        openrouter_fallback_models=(
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "qwen/qwen3-next-80b-a3b-instruct:free",
+        ),
         openrouter_site_url="https://dietapp.example",
         openrouter_app_name="DietAPP",
     )
@@ -129,6 +133,10 @@ def test_openrouter_config_exposes_base_url_model_and_headers() -> None:
         "HTTP-Referer": "https://dietapp.example",
         "X-OpenRouter-Title": "DietAPP",
     }
+    assert config.get_model_fallbacks() == (
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "qwen/qwen3-next-80b-a3b-instruct:free",
+    )
 
 
 def test_config_falls_back_to_available_provider_key() -> None:
@@ -156,6 +164,35 @@ def test_config_can_fall_back_to_openrouter_when_available() -> None:
     assert config.normalize_provider() == "openrouter"
     assert config.get_provider_label() == "OpenRouter"
     assert config.get_model() == "google/gemma-4-31b-it:free"
+
+
+def test_openrouter_attempt_order_uses_groq_before_local() -> None:
+    config = AppConfig(
+        ai_provider="openrouter",
+        openrouter_api_key="test-openrouter-key",
+        groq_api_key="test-groq-key",
+    )
+
+    assert config.get_provider_attempt_order() == ("openrouter", "groq")
+
+
+def test_openrouter_fallback_models_skip_primary_and_duplicates() -> None:
+    config = AppConfig(
+        ai_provider="openrouter",
+        openrouter_api_key="test-openrouter-key",
+        openrouter_model="google/gemma-4-31b-it:free",
+        openrouter_fallback_models=(
+            "google/gemma-4-31b-it:free",
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "qwen/qwen3-next-80b-a3b-instruct:free",
+        ),
+    )
+
+    assert config.get_model_fallbacks() == (
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "qwen/qwen3-next-80b-a3b-instruct:free",
+    )
 
 
 def test_profile_values_are_persisted_locally(tmp_path: Path) -> None:
@@ -322,9 +359,11 @@ def test_call_llm_json_passes_max_tokens(monkeypatch) -> None:
 
 def test_call_llm_json_sets_openrouter_headers(monkeypatch) -> None:
     captured_client_kwargs: dict[str, object] = {}
+    captured_request_kwargs: dict[str, object] = {}
 
     class FakeCompletions:
-        def create(self, **_kwargs):
+        def create(self, **kwargs):
+            captured_request_kwargs.update(kwargs)
             message = type("Message", (), {"content": '{"status": "ok"}'})()
             choice = type("Choice", (), {"message": message})()
             return type("Response", (), {"choices": [choice]})()
@@ -341,6 +380,10 @@ def test_call_llm_json_sets_openrouter_headers(monkeypatch) -> None:
             ai_provider="openrouter",
             openrouter_api_key="test-openrouter-key",
             openrouter_model="google/gemma-4-31b-it:free",
+            openrouter_fallback_models=(
+                "meta-llama/llama-3.3-70b-instruct:free",
+                "qwen/qwen3-next-80b-a3b-instruct:free",
+            ),
             openrouter_site_url="https://dietapp.example",
             openrouter_app_name="DietAPP",
         ),
@@ -356,6 +399,94 @@ def test_call_llm_json_sets_openrouter_headers(monkeypatch) -> None:
         "HTTP-Referer": "https://dietapp.example",
         "X-OpenRouter-Title": "DietAPP",
     }
+    assert captured_request_kwargs["models"] == [
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "qwen/qwen3-next-80b-a3b-instruct:free",
+    ]
+    assert captured_request_kwargs["route"] == "fallback"
+
+
+def test_strategy_uses_groq_when_openrouter_provider_fails(monkeypatch) -> None:
+    request = build_request()
+    strategy = generate_fallback_wellness_strategy(request)
+    attempted_providers: list[str | None] = []
+
+    def fake_generate(_request, _config, provider=None):
+        attempted_providers.append(provider)
+        if provider == "openrouter":
+            raise RuntimeError("temporarily rate-limited upstream")
+        if provider == "groq":
+            return strategy
+        raise AssertionError("provider inatteso")
+
+    monkeypatch.setattr(planner_module, "_generate_ai_wellness_strategy", fake_generate)
+
+    result = generate_wellness_strategy(
+        request,
+        AppConfig(
+            ai_provider="openrouter",
+            openrouter_api_key="test-openrouter-key",
+            groq_api_key="test-groq-key",
+            groq_model="llama-3.3-70b-versatile",
+        ),
+    )
+
+    assert attempted_providers == ["openrouter", "groq"]
+    assert result.source_label == "Groq | llama-3.3-70b-versatile"
+    assert result.warning is not None
+    assert "OpenRouter | google/gemma-4-31b-it:free" in result.warning
+    assert "Ho usato Groq | llama-3.3-70b-versatile come fallback." in result.warning
+
+
+def test_diet_uses_groq_when_openrouter_provider_fails(monkeypatch) -> None:
+    request = build_request()
+    strategy = generate_fallback_wellness_strategy(request)
+    plan = generate_fallback_plan(request, strategy)
+    attempted_providers: list[str | None] = []
+
+    def fake_generate(_request, _strategy, _config, provider=None):
+        attempted_providers.append(provider)
+        if provider == "openrouter":
+            raise RuntimeError("temporarily rate-limited upstream")
+        if provider == "groq":
+            return plan
+        raise AssertionError("provider inatteso")
+
+    monkeypatch.setattr(planner_module, "_generate_ai_plan", fake_generate)
+
+    result = generate_diet_from_strategy(
+        request,
+        strategy,
+        AppConfig(
+            ai_provider="openrouter",
+            openrouter_api_key="test-openrouter-key",
+            groq_api_key="test-groq-key",
+            groq_model="llama-3.3-70b-versatile",
+        ),
+    )
+
+    assert attempted_providers == ["openrouter", "groq"]
+    assert result.source_label == "Groq | llama-3.3-70b-versatile"
+    assert result.warning is not None
+    assert "OpenRouter | google/gemma-4-31b-it:free" in result.warning
+    assert "Ho usato Groq | llama-3.3-70b-versatile come fallback." in result.warning
+
+
+def test_format_provider_exception_clarifies_openrouter_rate_limit() -> None:
+    message = planner_module._format_provider_exception(
+        RuntimeError(
+            "Error code: 429 - {'error': {'message': 'Provider returned error', 'metadata': {'raw': 'google/gemma-4-31b-it:free is temporarily rate-limited upstream. Please retry shortly'}}}"
+        ),
+        AppConfig(
+            ai_provider="openrouter",
+            openrouter_api_key="test-openrouter-key",
+            openrouter_model="google/gemma-4-31b-it:free",
+            openrouter_fallback_models=("meta-llama/llama-3.3-70b-instruct:free",),
+        ),
+    )
+
+    assert "temporaneamente limitato" in message
+    assert "OPENROUTER_FALLBACK_MODELS" in message
 
 
 def test_markdown_and_metrics_are_populated() -> None:
