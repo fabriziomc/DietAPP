@@ -228,9 +228,17 @@ def inject_styles() -> None:
         .day-title {
             display: flex;
             justify-content: space-between;
-            align-items: baseline;
+            align-items: center;
             gap: 1rem;
+            flex-wrap: wrap;
             margin-bottom: 0.85rem;
+        }
+
+        .day-heading {
+            display: flex;
+            align-items: center;
+            gap: 0.65rem;
+            flex-wrap: wrap;
         }
 
         .day-title h3 {
@@ -305,6 +313,16 @@ def inject_styles() -> None:
             color: var(--green);
             font-size: 0.78rem;
             font-weight: 700;
+        }
+
+        .tag-source-ai {
+            background: rgba(28, 90, 62, 0.12);
+            color: var(--green);
+        }
+
+        .tag-source-fallback {
+            background: rgba(184, 103, 61, 0.14);
+            color: var(--terracotta);
         }
 
         .shopping-card,
@@ -567,13 +585,24 @@ def build_day_reuse_badge(day_plan) -> str:
     return "rotazione smart"
 
 
+def get_day_source_badge(day_plan) -> tuple[str, str]:
+    source = str(getattr(day_plan, "source", "") or "").strip().lower()
+    if source == "ai":
+        return "AI", "tag-source-ai"
+    return "Fallback", "tag-source-fallback"
+
+
 def render_day(day_plan, person_one_name: str, person_two_name: str) -> None:
+    source_label, source_class = get_day_source_badge(day_plan)
     st.markdown(
         dedent(
             f"""
         <div class="day-shell">
             <div class="day-title">
-                <h3>{escape(day_plan.day)}</h3>
+                <div class="day-heading">
+                    <h3>{escape(day_plan.day)}</h3>
+                    <span class="tag {escape(source_class)}">{escape(source_label)}</span>
+                </div>
                 <div class="tag">Riutilizzo: {escape(build_day_reuse_badge(day_plan))}</div>
             </div>
         </div>

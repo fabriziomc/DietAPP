@@ -64,6 +64,7 @@ def test_fallback_plan_has_full_week() -> None:
     assert len(plan.days) == 7
     assert plan.shopping_list
     assert all(day.dinner.shared_base for day in plan.days)
+    assert all(day.source == "Fallback" for day in plan.days)
     assert strategy.person_one.daily_kcal_target is not None
     assert strategy.person_two.protein_target_g is not None
 
@@ -303,8 +304,10 @@ def test_ai_plan_normalization_fills_missing_last_day_from_fallback() -> None:
     plan = _normalize_ai_plan(raw_plan, request, strategy, "Groq | test")
 
     assert len(plan.days) == 7
+    assert plan.days[0].source == "AI"
     sunday = plan.days[-1]
     assert sunday.day == "Domenica"
+    assert sunday.source == "Fallback"
     assert sunday.breakfast.person_one.description != "Versione da rifinire"
     assert sunday.lunch.person_one.ingredients
     assert sunday.dinner.person_two.prep_notes
@@ -382,9 +385,11 @@ def test_ai_plan_normalization_replaces_duplicate_full_days_with_fallback() -> N
     plan = _normalize_ai_plan(raw_plan, request, strategy, "Groq | test")
 
     assert plan.days[0].breakfast.shared_base == "Colazione ripetuta"
+    assert plan.days[0].source == "AI"
     assert plan.days[1].breakfast.shared_base != "Colazione ripetuta"
     assert plan.days[1].lunch.shared_base != "Pranzo ripetuto"
     assert plan.days[1].dinner.shared_base != "Cena ripetuta"
+    assert plan.days[1].source == "Fallback"
 
 
 def test_fallback_plan_excludes_blocked_ingredient_aliases() -> None:

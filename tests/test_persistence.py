@@ -247,6 +247,7 @@ def test_planning_state_is_persisted_and_restored_from_supabase_backend() -> Non
                         leftover_friendly=True,
                         kitchen_load="Medio",
                     ),
+                    source="AI",
                 )
             ],
             model_source="test-suite",
@@ -274,6 +275,7 @@ def test_planning_state_is_persisted_and_restored_from_supabase_backend() -> Non
     assert loaded.strategy_result.strategy.person_two.protein_target_g == 95
     assert loaded.diet_result is not None
     assert loaded.diet_result.plan.days[0].lunch.person_two.title == "Riso con ceci"
+    assert loaded.diet_result.plan.days[0].source == "AI"
     assert loaded.diet_result.source_label == "Groq | llama-test"
 
 

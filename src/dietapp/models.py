@@ -60,6 +60,19 @@ def _coerce_bool(value: Any) -> bool:
     return bool(value)
 
 
+def _normalize_day_source(value: Any, default: str = "Fallback") -> str:
+    text = str(value or "").strip().lower()
+    if text == "ai":
+        return "AI"
+    if text in {"fallback", "planner locale", "locale", "local", "salvato"}:
+        return "Fallback"
+    return "AI" if str(default or "").strip().lower() == "ai" else "Fallback"
+
+
+def _default_day_source_for_plan(model_source: str) -> str:
+    return "Fallback" if model_source.strip().lower() in {"", "planner locale", "salvato"} else "AI"
+
+
 @dataclass(slots=True)
 class PersonProfile:
     name: str
@@ -281,15 +294,17 @@ class DayPlan:
     breakfast: MealSlot
     lunch: MealSlot
     dinner: MealSlot
+    source: str = "Fallback"
 
     @classmethod
-    def from_dict(cls, raw: Any) -> "DayPlan":
+    def from_dict(cls, raw: Any, default_source: str = "Fallback") -> "DayPlan":
         payload = raw if isinstance(raw, dict) else {}
         return cls(
             day=str(payload.get("day") or "Giorno").strip() or "Giorno",
             breakfast=MealSlot.from_dict(payload.get("breakfast")),
             lunch=MealSlot.from_dict(payload.get("lunch")),
             dinner=MealSlot.from_dict(payload.get("dinner")),
+            source=_normalize_day_source(payload.get("source"), default_source),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -298,6 +313,7 @@ class DayPlan:
             "breakfast": self.breakfast.to_dict(),
             "lunch": self.lunch.to_dict(),
             "dinner": self.dinner.to_dict(),
+            "source": self.source,
         }
 
 
@@ -315,14 +331,16 @@ class WeeklyPlan:
     def from_dict(cls, raw: Any) -> "WeeklyPlan":
         payload = raw if isinstance(raw, dict) else {}
         raw_days = payload.get("days") if isinstance(payload.get("days"), list) else []
+        model_source = str(payload.get("model_source") or "salvato").strip() or "salvato"
+        default_day_source = _default_day_source_for_plan(model_source)
         return cls(
             title=str(payload.get("title") or "Piano settimanale").strip() or "Piano settimanale",
             strategy=str(payload.get("strategy") or "").strip(),
             prep_tasks=_clean_string_list(payload.get("prep_tasks")),
             planning_notes=_clean_string_list(payload.get("planning_notes")),
             shopping_list=_clean_mapping_of_string_lists(payload.get("shopping_list")),
-            days=[DayPlan.from_dict(day) for day in raw_days],
-            model_source=str(payload.get("model_source") or "salvato").strip() or "salvato",
+            days=[DayPlan.from_dict(day, default_day_source) for day in raw_days],
+            model_source=model_source,
         )
 
     def to_dict(self) -> dict[str, Any]:

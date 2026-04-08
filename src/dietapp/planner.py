@@ -436,6 +436,7 @@ def generate_fallback_plan(
                 breakfast=breakfast,
                 lunch=lunch,
                 dinner=dinner,
+                source="Fallback",
             )
         )
 
@@ -712,12 +713,14 @@ def _normalize_ai_plan(
     for index, day_name in enumerate(DAYS):
         fallback_day = fallback_plan.days[index]
         raw_day = days_raw[index] if index < len(days_raw) and isinstance(days_raw[index], dict) else {}
+        has_ai_content = _day_payload_has_ai_content(raw_day)
         days.append(
             DayPlan(
                 day=str(raw_day.get("day") or fallback_day.day or day_name),
                 breakfast=_normalize_meal_slot(raw_day.get("breakfast"), request, fallback_day.breakfast),
                 lunch=_normalize_meal_slot(raw_day.get("lunch"), request, fallback_day.lunch),
                 dinner=_normalize_meal_slot(raw_day.get("dinner"), request, fallback_day.dinner),
+                source="AI" if has_ai_content else "Fallback",
             )
         )
 
@@ -808,6 +811,20 @@ def _replace_duplicate_ai_days(days: list[DayPlan], fallback_days: list[DayPlan]
         seen_signatures.add(day_signature)
 
     return resolved_days
+
+
+def _day_payload_has_ai_content(raw_day: dict[str, Any]) -> bool:
+    if not isinstance(raw_day, dict):
+        return False
+
+    for meal_key in ("breakfast", "lunch", "dinner"):
+        meal_payload = raw_day.get(meal_key)
+        if isinstance(meal_payload, dict) and any(
+            value not in (None, "", [], {}) for value in meal_payload.values()
+        ):
+            return True
+
+    return False
 
 
 def _day_menu_signature(day: DayPlan) -> tuple[Any, ...]:
