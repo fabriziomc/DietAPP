@@ -1,7 +1,9 @@
 .venv/
+*.egg-info/
 __pycache__/
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 .streamlit/secrets.toml
 .env
 data/household_profile.json

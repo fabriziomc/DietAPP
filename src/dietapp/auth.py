@@ -5,11 +5,17 @@ from typing import Any
 
 from dietapp.config import AppConfig
 
+ClientOptions: Any = None
+create_client: Any = None
+
 try:
-    from supabase import ClientOptions, create_client
+    from supabase import ClientOptions as _ClientOptions
+    from supabase import create_client as _create_client
 except ImportError:
-    ClientOptions = None
-    create_client = None
+    pass
+else:
+    ClientOptions = _ClientOptions
+    create_client = _create_client
 
 
 @dataclass(slots=True)

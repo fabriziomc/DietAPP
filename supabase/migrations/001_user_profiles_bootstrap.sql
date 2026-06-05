@@ -1,5 +1,5 @@
--- Rerunnable bootstrap script for DietAPP on Supabase.
--- Safe to execute on a fresh project and safe to re-run after previous executions.
+-- Initial immutable migration for DietAPP user profile storage on Supabase.
+-- Apply once on a fresh database. For later changes, create a new numbered migration.
 
 begin;
 
@@ -15,29 +15,6 @@ create table if not exists public.user_profiles (
     diet_warning text,
     updated_at timestamptz not null default timezone('utc', now())
 );
-
-alter table public.user_profiles add column if not exists form_values jsonb;
-alter table public.user_profiles add column if not exists request_payload jsonb;
-alter table public.user_profiles add column if not exists strategy_payload jsonb;
-alter table public.user_profiles add column if not exists strategy_source_label text;
-alter table public.user_profiles add column if not exists strategy_warning text;
-alter table public.user_profiles add column if not exists plan_payload jsonb;
-alter table public.user_profiles add column if not exists diet_source_label text;
-alter table public.user_profiles add column if not exists diet_warning text;
-alter table public.user_profiles add column if not exists updated_at timestamptz;
-
-update public.user_profiles
-set form_values = '{}'::jsonb
-where form_values is null;
-
-update public.user_profiles
-set updated_at = timezone('utc', now())
-where updated_at is null;
-
-alter table public.user_profiles alter column form_values set default '{}'::jsonb;
-alter table public.user_profiles alter column form_values set not null;
-alter table public.user_profiles alter column updated_at set default timezone('utc', now());
-alter table public.user_profiles alter column updated_at set not null;
 
 alter table public.user_profiles enable row level security;
 

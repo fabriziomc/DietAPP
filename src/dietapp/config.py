@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-
+from typing import Any
 
 DEFAULT_OPENROUTER_FALLBACK_MODELS = (
     "meta-llama/llama-3.3-70b-instruct:free",
@@ -16,13 +16,17 @@ def _split_csv_env(raw_value: str | None) -> tuple[str, ...]:
         return ()
     return tuple(item.strip() for item in raw_value.split(",") if item.strip())
 
+load_dotenv: Any = None
+
 try:
-    from dotenv import load_dotenv
+    from dotenv import load_dotenv as _load_dotenv
 except ImportError:
-    load_dotenv = None
+    pass
+else:
+    load_dotenv = _load_dotenv
 
 
-if load_dotenv:
+if callable(load_dotenv):
     load_dotenv()
 
 

@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dietapp"
+version = "0.1.0"
+description = "Planner settimanale per una coppia con regimi alimentari diversi"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "streamlit>=1.44,<2.0",
+    "openai>=1.72,<2.0",
+    "python-dotenv>=1.0,<2.0",
+    "supabase>=2.15,<3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<9.0",
+    "ruff>=0.11,<1.0",
+    "mypy>=1.15,<2.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["dietapp"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src/dietapp", "tests"]
+check_untyped_defs = true
+ignore_missing_imports = true
+pretty = true
+show_error_codes = true

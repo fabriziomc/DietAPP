@@ -3,11 +3,10 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from dietapp.models import PlanningRequest, WeeklyPlan, WellnessStrategy
 from dietapp.planner import DietResult, StrategyResult
-
 
 APP_ROOT = Path(__file__).resolve().parents[2]
 PROFILE_PATH = APP_ROOT / "data" / "household_profile.json"
@@ -66,7 +65,7 @@ def load_profile_form_values(path: Path | None = None) -> dict[str, Any]:
     return _sanitize_profile_values(raw_data)
 
 
-def save_profile_form_values(values: dict[str, Any], path: Path | None = None) -> None:
+def save_profile_form_values(values: Mapping[str, Any], path: Path | None = None) -> None:
     profile_path = path or PROFILE_PATH
     profile_path.parent.mkdir(parents=True, exist_ok=True)
     clean_values = _sanitize_profile_values(values)
@@ -97,7 +96,7 @@ def load_profile_form_values_from_supabase(
 
 
 def save_profile_form_values_to_supabase(
-    values: dict[str, Any],
+    values: Mapping[str, Any],
     client: Any,
     user_id: str,
     table_name: str = "user_profiles",

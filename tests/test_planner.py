@@ -266,6 +266,10 @@ def test_local_wellness_strategy_uses_target_weight_goal() -> None:
 
     strategy = generate_fallback_wellness_strategy(request)
 
+    assert baseline_strategy.person_one.daily_kcal_target is not None
+    assert baseline_strategy.person_two.daily_kcal_target is not None
+    assert strategy.person_one.daily_kcal_target is not None
+    assert strategy.person_two.daily_kcal_target is not None
     assert "dimagr" in strategy.person_one.focus.lower()
     assert strategy.person_one.daily_kcal_target < baseline_strategy.person_one.daily_kcal_target
     assert "75" in strategy.person_one.rationale

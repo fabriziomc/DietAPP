@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 from dietapp.auth import AuthSession
 from dietapp.config import AppConfig
 from dietapp.models import (
@@ -14,7 +17,6 @@ from dietapp.models import (
     WellnessStrategy,
 )
 from dietapp.persistence import (
-    clear_planning_state_from_supabase,
     load_planning_state_from_supabase,
     load_profile_form_values,
     load_profile_form_values_from_supabase,
@@ -30,10 +32,10 @@ class FakeResponse:
 
 
 class FakeTable:
-    def __init__(self, store: dict[str, dict]):
+    def __init__(self, store: dict[str, dict[str, Any]]):
         self.store = store
         self.user_id = ""
-        self.payload = None
+        self.payload: dict[str, Any] | None = None
         self.operation = ""
 
     def select(self, _columns: str) -> "FakeTable":
@@ -67,7 +69,7 @@ class FakeTable:
 
 class FakeSupabaseClient:
     def __init__(self):
-        self.store: dict[str, dict] = {}
+        self.store: dict[str, dict[str, Any]] = {}
 
     def table(self, _table_name: str) -> FakeTable:
         return FakeTable(self.store)

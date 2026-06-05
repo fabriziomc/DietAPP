@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dietapp.models import PlanningRequest, WeeklyPlan, WellnessStrategy
+from dietapp.models import IngredientPortion, PlanningRequest, WeeklyPlan, WellnessStrategy
 
 
 def compute_plan_metrics(plan: WeeklyPlan) -> dict[str, int]:
@@ -65,23 +65,47 @@ def plan_to_markdown(
             "",
             f"### {day.day}",
             f"- Colazione: {day.breakfast.shared_base}",
-            f"  - {request.person_one.name}: {day.breakfast.person_one.title}",
-            f"  - {request.person_two.name}: {day.breakfast.person_two.title}",
+            f"  - {request.person_one.name}: {day.breakfast.person_one.title} | {day.breakfast.person_one.portion_label or '1 porzione'}",
+            f"  - Ingredienti {request.person_one.name}: {_format_ingredient_details(day.breakfast.person_one.ingredient_details, day.breakfast.person_one.ingredients)}",
+            f"  - {request.person_two.name}: {day.breakfast.person_two.title} | {day.breakfast.person_two.portion_label or '1 porzione'}",
+            f"  - Ingredienti {request.person_two.name}: {_format_ingredient_details(day.breakfast.person_two.ingredient_details, day.breakfast.person_two.ingredients)}",
             f"- Pranzo: {day.lunch.shared_base}",
-            f"  - {request.person_one.name}: {day.lunch.person_one.title}",
-            f"  - {request.person_two.name}: {day.lunch.person_two.title}",
+            f"  - {request.person_one.name}: {day.lunch.person_one.title} | {day.lunch.person_one.portion_label or '1 porzione'}",
+            f"  - Ingredienti {request.person_one.name}: {_format_ingredient_details(day.lunch.person_one.ingredient_details, day.lunch.person_one.ingredients)}",
+            f"  - {request.person_two.name}: {day.lunch.person_two.title} | {day.lunch.person_two.portion_label or '1 porzione'}",
+            f"  - Ingredienti {request.person_two.name}: {_format_ingredient_details(day.lunch.person_two.ingredient_details, day.lunch.person_two.ingredients)}",
             f"- Cena: {day.dinner.shared_base}",
-            f"  - {request.person_one.name}: {day.dinner.person_one.title}",
-            f"  - {request.person_two.name}: {day.dinner.person_two.title}",
+            f"  - {request.person_one.name}: {day.dinner.person_one.title} | {day.dinner.person_one.portion_label or '1 porzione'}",
+            f"  - Ingredienti {request.person_one.name}: {_format_ingredient_details(day.dinner.person_one.ingredient_details, day.dinner.person_one.ingredients)}",
+            f"  - {request.person_two.name}: {day.dinner.person_two.title} | {day.dinner.person_two.portion_label or '1 porzione'}",
+            f"  - Ingredienti {request.person_two.name}: {_format_ingredient_details(day.dinner.person_two.ingredient_details, day.dinner.person_two.ingredients)}",
         ])
 
     lines.extend(["", "## Lista della spesa"])
-    for category, items in plan.shopping_list.items():
-        lines.append(f"- {category}: {', '.join(items)}")
+    if plan.shopping_list_details:
+        for category, detailed_items in plan.shopping_list_details.items():
+            lines.append(f"- {category}: {', '.join(item.display_label() for item in detailed_items)}")
+    else:
+        for category, item_names in plan.shopping_list.items():
+            lines.append(f"- {category}: {', '.join(item_names)}")
 
     if plan.planning_notes:
         lines.extend(["", "## Note operative"])
         for note in plan.planning_notes:
             lines.append(f"- {note}")
 
+    if plan.coherence_checks:
+        lines.extend(["", "## Controlli automatici"])
+        for check in plan.coherence_checks:
+            lines.append(f"- {check}")
+
     return "\n".join(lines)
+
+
+def _format_ingredient_details(
+    ingredient_details: list[IngredientPortion],
+    fallback_ingredients: list[str],
+) -> str:
+    if ingredient_details:
+        return ", ".join(detail.display_label() for detail in ingredient_details)
+    return ", ".join(fallback_ingredients)

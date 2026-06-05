@@ -2,6 +2,11 @@
 
 Applicazione web in Python + Streamlit per pianificare la dieta settimanale di una coppia con regimi alimentari diversi, riducendo al minimo il lavoro in cucina.
 
+## Documentazione
+
+- guida utente: [GUIDA_UTENTE.md](GUIDA_UTENTE.md)
+- setup e operativita Supabase: [supabase/README.md](supabase/README.md)
+
 ## Cosa fa
 
 - raccoglie i profili alimentari di due persone
@@ -9,7 +14,7 @@ Applicazione web in Python + Streamlit per pianificare la dieta settimanale di u
 - genera prima una strategia benessere personalizzata e poi il piano settimanale con colazione, pranzo e cena
 - cerca di riusare basi comuni tra versione onnivora e vegetariana
 - privilegia batch cooking, avanzi intelligenti e ingredienti ricorrenti
-- produce una lista della spesa aggregata
+- produce una lista della spesa aggregata con quantita quando disponibili
 - usa i valori del file `.env` per OpenAI, Groq o OpenRouter, altrimenti passa a un planner locale deterministico con ricette italiane
 - puo salvare localmente il profilo della coppia e ricaricarlo ai successivi avvii
 
@@ -18,8 +23,24 @@ Applicazione web in Python + Streamlit per pianificare la dieta settimanale di u
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+pip install -e ".[dev]"
 copy .env.example .env
+streamlit run app.py
+```
+
+Se ti serve solo l'ambiente runtime, per esempio su Streamlit Cloud o per un avvio locale minimale, puoi usare anche:
+
+```bash
+pip install -r requirements.txt
+```
+
+## Comandi di sviluppo
+
+```bash
+python -m pytest
+python -m ruff check .
+python -m mypy
 streamlit run app.py
 ```
 
@@ -99,12 +120,17 @@ La UI non espone signup pubblico. Per mantenere l'app privata:
 3. crea manualmente gli utenti autorizzati
 4. usa nell'app solo il login email/password
 
+`supabase/schema.sql` e ora un bootstrap riapplicabile.
+Se vuoi invece una base piu rigorosa e versionata, usa la migrazione iniziale in [supabase/migrations/001_user_profiles_bootstrap.sql](supabase/migrations/001_user_profiles_bootstrap.sql) e poi aggiungi solo nuove migrazioni numerate.
+Dettagli operativi in [supabase/README.md](supabase/README.md).
+
 Quando Supabase e configurato:
 
 - l'app chiede login prima di mostrare il planner
 - il profilo coppia viene salvato per `user_id` nel database
 - l'ultima strategia benessere e l'ultimo piano settimanale vengono salvati e ricaricati automaticamente se il profilo non e cambiato
 - i dati non dipendono piu dal filesystem locale di Streamlit Cloud
+- il piano mostra porzioni, quantita ingredienti, spesa aggregata e controlli automatici di coerenza
 
 Per il reset password via email:
 
@@ -146,5 +172,14 @@ Quando il profilo cambia, l'app invalida la strategia e il piano precedenti per 
 - `src/dietapp/auth.py`: login Supabase e gestione sessione
 - `src/dietapp/persistence.py`: persistenza locale o su Supabase di profilo, strategia e piano
 - `src/dietapp/formatters.py`: export markdown e metriche
+- `GUIDA_UTENTE.md`: guida pratica per chi usa l'app
+- `supabase/README.md`: setup, verifica e deploy privato con Supabase
 - `supabase/schema.sql`: tabella e policy RLS per profilo, strategia e piano utente
 - `tests/test_planner.py`: test base del planner locale
+
+## Tooling progetto
+
+- packaging e configurazione centralizzati in `pyproject.toml`
+- installazione locale consigliata in editable mode con `pip install -e ".[dev]"`
+- `requirements.txt` mantenuto come entrypoint runtime minimale
+- CI pronta per test, lint e type-check
