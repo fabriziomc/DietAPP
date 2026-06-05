@@ -91,7 +91,22 @@ Puoi scaricare:
 - Markdown: utile da leggere, condividere o stampare
 - JSON: utile se vuoi riusare il piano in altri sistemi o conservarlo in forma strutturata
 
-## 9. Accesso cloud con Supabase
+## 9. Se usi modelli gratuiti
+
+Se usi la configurazione AI gratuita consigliata oggi:
+
+- il modello principale e `google/gemma-4-31b-it:free`
+- il primo fallback consigliato e `google/gemma-4-26b-a4b-it:free`
+- i fallback successivi consigliati sono `qwen/qwen3-next-80b-a3b-instruct:free`, `openai/gpt-oss-120b:free` e `openai/gpt-oss-20b:free`
+
+In pratica:
+
+- OpenRouter prova prima il modello principale
+- se il modello gratuito e saturo, passa ai fallback in ordine
+- se hai configurato anche Groq, l'app puo usarlo come provider secondario
+- se anche i provider AI non rispondono, l'app passa al planner locale
+
+## 10. Accesso cloud con Supabase
 
 Se l'istanza usa Supabase:
 
@@ -101,13 +116,14 @@ Se l'istanza usa Supabase:
 
 Se ricevi un link di recovery password via email, aprilo e completa il reset direttamente nell'app.
 
-## 10. Problemi comuni
+## 11. Problemi comuni
 
 - Hai cambiato il profilo ma vedi ancora un piano vecchio: salva il profilo e rigenera prima la strategia, poi la dieta.
 - Mancano chiavi AI: l'app continua a funzionare con il planner locale.
+- Un modello gratuito risulta temporaneamente limitato o saturo: l'app prova i fallback configurati; se non bastano, passa al planner locale.
 - La lista della spesa non sembra completa: controlla la sezione `Controlli automatici` e rigenera il piano se il payload AI e parziale.
 - Hai dubbi sulle quantita: usa il piano come base operativa e ritocca manualmente i casi in cui conosci fabbisogni molto specifici.
 
-## 11. Nota importante
+## 12. Nota importante
 
 DietAPP e uno strumento organizzativo e non sostituisce indicazioni mediche o nutrizionali professionali.

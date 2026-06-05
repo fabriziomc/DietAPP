@@ -59,7 +59,7 @@ Esempio OpenRouter con modello gratuito:
 AI_PROVIDER=openrouter
 OPENROUTER_API_KEY=sk-or-...
 OPENROUTER_MODEL=google/gemma-4-31b-it:free
-OPENROUTER_FALLBACK_MODELS=meta-llama/llama-3.3-70b-instruct:free,qwen/qwen3-next-80b-a3b-instruct:free,openai/gpt-oss-120b:free
+OPENROUTER_FALLBACK_MODELS=google/gemma-4-26b-a4b-it:free,qwen/qwen3-next-80b-a3b-instruct:free,openai/gpt-oss-120b:free,openai/gpt-oss-20b:free
 OPENROUTER_SITE_URL=https://tuo-app.streamlit.app
 OPENROUTER_APP_NAME=DietAPP
 ```
@@ -70,16 +70,16 @@ Se `AI_PROVIDER=openrouter` e hai anche `GROQ_API_KEY`, l'app prova prima OpenRo
 
 Modelli consigliati su Groq per questa app:
 
-- `llama-3.3-70b-versatile`: scelta migliore per qualita e aderenza al JSON
-- `llama-3.1-8b-instant`: scelta migliore per velocita e costo ridotto
+- `llama-3.3-70b-versatile`: utile come provider secondario quando OpenRouter non risponde, ma oggi non e il canale gratuito principale consigliato
+- `llama-3.1-8b-instant`: fallback piu leggero se vuoi contenere latenza e consumo token
 
 Modelli OpenRouter sensati per iniziare:
 
-- `google/gemma-4-31b-it:free`: buon punto di partenza per test e fallback a costo zero
-- `google/gemma-4-26b-a4b-it:free`: alternativa gratuita spesso piu leggera
-- `meta-llama/llama-3.3-70b-instruct:free`: buon fallback gratuito orientato a JSON e istruzioni
-- `qwen/qwen3-next-80b-a3b-instruct:free`: altro fallback gratuito valido quando il ramo Google e saturo
-- `openai/gpt-oss-120b:free`: fallback aggiuntivo se vuoi distribuire il carico su famiglie diverse
+- `google/gemma-4-31b-it:free`: default consigliato oggi per DietAPP
+- `google/gemma-4-26b-a4b-it:free`: primo fallback piu leggero ma ancora molto adatto a JSON e piani strutturati
+- `qwen/qwen3-next-80b-a3b-instruct:free`: buon fallback lungo e stabile per prompt grandi e output formattati
+- `openai/gpt-oss-120b:free`: fallback di qualita per reasoning e structured output
+- `openai/gpt-oss-20b:free`: fallback piu leggero e pragmatico
 
 Se la chiave non e presente, l'app resta comunque utilizzabile tramite il planner locale.
 Il planner locale ora filtra gli ingredienti esclusi, usa davvero budget e cucine preferite per ordinare i template, mantiene le proposte in un perimetro di ricette italiane domestiche e, nei casi piu stretti, prova a sostituire automaticamente gli ingredienti vietati con equivalenti compatibili.
@@ -92,7 +92,7 @@ Il planner locale ora filtra gli ingredienti esclusi, usa davvero budget e cucin
 4. copia la chiave nel file `.env` come `OPENROUTER_API_KEY`
 5. imposta `AI_PROVIDER=openrouter`
 6. se l'app e pubblicata, aggiungi anche `OPENROUTER_SITE_URL` con l'URL pubblico della tua app e lascia `OPENROUTER_APP_NAME=DietAPP`
-7. opzionalmente imposta `OPENROUTER_FALLBACK_MODELS` con una lista separata da virgole di modelli alternativi, per esempio `meta-llama/llama-3.3-70b-instruct:free,qwen/qwen3-next-80b-a3b-instruct:free,openai/gpt-oss-120b:free`
+7. opzionalmente imposta `OPENROUTER_FALLBACK_MODELS` con una lista separata da virgole di modelli alternativi, per esempio `google/gemma-4-26b-a4b-it:free,qwen/qwen3-next-80b-a3b-instruct:free,openai/gpt-oss-120b:free,openai/gpt-oss-20b:free`
 
 Nota pratica: i modelli gratuiti su OpenRouter possono avere disponibilita e rate limit variabili nel tempo, quindi conviene tenerlo come provider alternativo accanto a Groq e configurare uno o piu fallback automatici.
 

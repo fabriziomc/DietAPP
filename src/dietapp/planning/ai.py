@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 from dietapp.config import AppConfig
@@ -37,6 +38,9 @@ from dietapp.planning.quantities import (
 )
 from dietapp.planning.strategy import generate_fallback_wellness_strategy
 
+GROQ_REQUEST_TOKEN_BUDGET = 11500
+GROQ_TOKEN_SAFETY_MARGIN = 500
+
 
 def _call_llm_json(
     openai_client_factory: Any,
@@ -67,8 +71,9 @@ def _call_llm_json(
             {"role": "user", "content": user_prompt},
         ],
     }
-    if max_tokens is not None:
-        request_kwargs["max_tokens"] = max_tokens
+    resolved_max_tokens = _resolve_max_tokens_budget(config, system_prompt, user_prompt, max_tokens, provider)
+    if resolved_max_tokens is not None:
+        request_kwargs["max_tokens"] = resolved_max_tokens
     model_fallbacks = config.get_model_fallbacks(provider)
     if model_fallbacks:
         request_kwargs["extra_body"] = {
@@ -171,7 +176,7 @@ def _build_strategy_ai_prompt(request: PlanningRequest) -> str:
 Analizza il seguente profilo di coppia e proponi in italiano una strategia benessere realistica.
 
 Payload:
-{json.dumps(payload, indent=2, ensure_ascii=False)}
+{_compact_json_dumps(payload)}
 
 Regole:
 - Usa soprattutto eta, sesso, altezza, peso e descrizione dell'attivita fisica.
@@ -255,10 +260,10 @@ def _build_plan_ai_prompt(request: PlanningRequest, strategy: WellnessStrategy) 
 Costruisci un piano alimentare settimanale in italiano per una coppia usando questa strategia benessere come fonte principale.
 
 Payload coppia:
-{json.dumps(payload, indent=2, ensure_ascii=False)}
+{_compact_json_dumps(payload)}
 
 Strategia benessere approvata:
-{json.dumps(strategy_payload, indent=2, ensure_ascii=False)}
+{_compact_json_dumps(strategy_payload)}
 
 Regole:
 - La strategia sopra e il punto di partenza: i pasti devono rispettare focus, target derivati e linee guida di ciascuna persona.
@@ -587,6 +592,43 @@ def _copy_preferences_with_goal(preferences: HouseholdPreferences, goal: str) ->
         excluded_ingredients=list(preferences.excluded_ingredients),
         notes=preferences.notes,
     )
+
+
+def _compact_json_dumps(payload: Any) -> str:
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def _resolve_max_tokens_budget(
+    config: AppConfig,
+    system_prompt: str,
+    user_prompt: str,
+    requested_max_tokens: int | None,
+    provider: str | None,
+) -> int | None:
+    if requested_max_tokens is None:
+        return None
+
+    selected_provider = provider or config.normalize_provider()
+    if selected_provider != "groq":
+        return requested_max_tokens
+
+    estimated_prompt_tokens = _estimate_prompt_tokens(system_prompt, user_prompt)
+    available_completion_tokens = GROQ_REQUEST_TOKEN_BUDGET - estimated_prompt_tokens - GROQ_TOKEN_SAFETY_MARGIN
+    if available_completion_tokens <= 0:
+        raise RuntimeError(
+            "La richiesta del piano e troppo ampia per il budget token del provider Groq configurato. "
+            "Riduci il profilo, prova un provider diverso oppure usa il planner locale."
+        )
+
+    return min(requested_max_tokens, available_completion_tokens)
+
+
+def _estimate_prompt_tokens(system_prompt: str, user_prompt: str) -> int:
+    return _estimate_text_tokens(system_prompt) + _estimate_text_tokens(user_prompt) + 32
+
+
+def _estimate_text_tokens(text: str) -> int:
+    return max(1, math.ceil(len(text) / 4))
 
 
 def _summarize_goal(strategy: WellnessStrategy) -> str:

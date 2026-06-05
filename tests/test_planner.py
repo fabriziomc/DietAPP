@@ -361,6 +361,35 @@ def test_call_llm_json_passes_max_tokens(monkeypatch) -> None:
     assert captured["max_tokens"] == 7000
 
 
+def test_call_llm_json_caps_max_tokens_for_groq_when_prompt_is_large(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+
+            message = type("Message", (), {"content": '{"status": "ok"}'})()
+            choice = type("Choice", (), {"message": message})()
+            return type("Response", (), {"choices": [choice]})()
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.chat = type("Chat", (), {"completions": FakeCompletions()})()
+
+    monkeypatch.setattr(planner_module, "OpenAI", FakeClient)
+
+    payload = planner_module._call_llm_json(
+        AppConfig(ai_provider="groq", groq_api_key="test-key"),
+        "system",
+        "x" * 20000,
+        max_tokens=7000,
+    )
+
+    assert payload == {"status": "ok"}
+    assert isinstance(captured["max_tokens"], int)
+    assert captured["max_tokens"] < 7000
+
+
 def test_call_llm_json_sets_openrouter_headers(monkeypatch) -> None:
     captured_client_kwargs: dict[str, object] = {}
     captured_request_kwargs: dict[str, object] = {}
