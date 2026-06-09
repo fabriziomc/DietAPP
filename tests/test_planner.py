@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import dietapp.planner as planner_module
+import pytest
 from dietapp.config import AppConfig
+from dietapp.defaults import DAYS
 from dietapp.formatters import compute_plan_metrics, plan_to_markdown
 from dietapp.models import HouseholdPreferences, PersonProfile, PlanningRequest
 from dietapp.persistence import load_profile_form_values, save_profile_form_values
@@ -55,6 +57,116 @@ def build_request() -> PlanningRequest:
             notes="Ridurre il numero di pentole usate.",
         ),
     )
+
+
+def build_staged_plan_skeleton() -> dict[str, object]:
+    return {
+        "title": "Settimana AI scalare",
+        "strategy": "Rotazione leggera con basi condivise e avanzi a pranzo.",
+        "prep_tasks": [
+            "Cuoci due basi cereali all'inizio settimana.",
+            "Prepara un taglio verdure riutilizzabile per 2 cene.",
+        ],
+        "planning_notes": [
+            "Alterna legumi, latticini freschi e carni bianche.",
+            "Usa i pranzi come scarico degli avanzi quando indicato.",
+        ],
+        "days": [
+            {
+                "day": day_name,
+                "theme": f"Rotazione {index + 1}",
+                "variety_guardrail": f"Non ripetere il menu completo di {day_name} negli altri giorni.",
+                "breakfast": {
+                    "shared_base": f"Colazione {day_name}",
+                    "direction": f"Base cremosa diversa per {day_name}",
+                    "prep_minutes": 5,
+                    "leftover_friendly": False,
+                    "reuse_from_previous": "",
+                    "kitchen_load": "Molto basso",
+                },
+                "lunch": {
+                    "shared_base": f"Pranzo {day_name}",
+                    "direction": f"Pranzo rapido diverso per {day_name}",
+                    "prep_minutes": 10,
+                    "leftover_friendly": True,
+                    "reuse_from_previous": f"Recupera componenti da {day_name} se utile.",
+                    "kitchen_load": "Basso",
+                },
+                "dinner": {
+                    "shared_base": f"Cena {day_name}",
+                    "direction": f"Cena principale diversa per {day_name}",
+                    "prep_minutes": 25,
+                    "leftover_friendly": True,
+                    "reuse_from_previous": f"Lascia una porzione utile al pranzo successivo dopo {day_name}.",
+                    "kitchen_load": "Medio",
+                },
+            }
+            for index, day_name in enumerate(DAYS)
+        ],
+    }
+
+
+def build_staged_ai_day(day_name: str, index: int) -> dict[str, object]:
+    return {
+        "day": day_name,
+        "breakfast": {
+            "shared_base": f"Colazione completa {day_name}",
+            "person_one": {
+                "title": f"Bowl proteica {day_name}",
+                "description": "Colazione fresca con base cremosa e frutta.",
+                "ingredients": ["yogurt greco", "avena", f"frutta {index + 1}"],
+                "prep_notes": "Assembla tutto in una bowl fredda.",
+            },
+            "person_two": {
+                "title": f"Bowl vegetariana {day_name}",
+                "description": "Stessa base con topping leggermente diverso.",
+                "ingredients": ["yogurt", "fiocchi d'avena", f"frutta {index + 2}"],
+                "prep_notes": "Completa con semi o cannella al momento.",
+            },
+            "prep_minutes": 5,
+            "leftover_friendly": False,
+            "reuse_from_previous": "",
+            "kitchen_load": "Molto basso",
+        },
+        "lunch": {
+            "shared_base": f"Pranzo completo {day_name}",
+            "person_one": {
+                "title": f"Insalata di riso {day_name}",
+                "description": "Pranzo rapido con cereale e proteina leggera.",
+                "ingredients": ["riso", "zucchine", f"proteina {index + 1}"],
+                "prep_notes": "Usa cereale gia cotto per tagliare i tempi.",
+            },
+            "person_two": {
+                "title": f"Insalata mediterranea {day_name}",
+                "description": "Stessa base con variante vegetariana.",
+                "ingredients": ["riso", "pomodori", f"legume {index + 1}"],
+                "prep_notes": "Condisci all'ultimo per mantenere freschezza.",
+            },
+            "prep_minutes": 10,
+            "leftover_friendly": True,
+            "reuse_from_previous": f"Recupera eventuali basi cotte dal giorno {index + 1}.",
+            "kitchen_load": "Basso",
+        },
+        "dinner": {
+            "shared_base": f"Cena completa {day_name}",
+            "person_one": {
+                "title": f"Piatto serale onnivoro {day_name}",
+                "description": "Cena italiana con base condivisa e proteina dedicata.",
+                "ingredients": ["patate", "verdure miste", f"proteina cena {index + 1}"],
+                "prep_notes": "Cuoci tutto in una sola teglia quando possibile.",
+            },
+            "person_two": {
+                "title": f"Piatto serale vegetariano {day_name}",
+                "description": "Stessa base con variante vegetariana coerente.",
+                "ingredients": ["patate", "verdure miste", f"legume cena {index + 1}"],
+                "prep_notes": "Aggiungi la componente proteica negli ultimi minuti.",
+            },
+            "prep_minutes": 25,
+            "leftover_friendly": True,
+            "reuse_from_previous": f"Conserva una porzione per il pranzo successivo a {day_name}.",
+            "kitchen_load": "Medio",
+        },
+    }
 
 
 def test_fallback_plan_has_full_week() -> None:
@@ -341,14 +453,15 @@ def test_plan_prompt_preview_contains_strategy_payload() -> None:
 
     preview = build_plan_prompt_preview(request, strategy)
 
-    assert "=== SYSTEM PROMPT ===" in preview
-    assert "Costruisci un piano alimentare settimanale" in preview
+    assert "FASE 1: SKELETON SETTIMANALE" in preview
+    assert "FASE 2: DETTAGLIO GIORNALIERO" in preview
+    assert "Costruisci prima lo skeleton settimanale" in preview
+    assert "Espandi un solo giorno della settimana" in preview
     assert "Strategia benessere approvata:" in preview
     assert strategy.title in preview
-    assert 'Il JSON e valido solo se contiene esattamente 7 oggetti in "days"' in preview
-    assert "shared_base, description e prep_notes brevi e operativi" in preview
-    for day_name in ("Lunedi", "Martedi", "Mercoledi", "Giovedi", "Venerdi", "Sabato", "Domenica"):
-        assert f'"day": "{day_name}"' in preview
+    assert '"day": "Lunedi"' in preview
+    assert '"variety_guardrail": "string"' in preview
+    assert '"ingredients": ["string"]' in preview
 
 
 def test_call_llm_json_passes_max_tokens(monkeypatch) -> None:
@@ -462,6 +575,94 @@ def test_call_llm_json_sets_openrouter_headers(monkeypatch) -> None:
         ],
         "route": "fallback",
     }
+
+
+def test_generate_ai_plan_uses_staged_pipeline(monkeypatch) -> None:
+    request = build_request()
+    strategy = generate_fallback_wellness_strategy(request)
+    responses = iter([build_staged_plan_skeleton(), *(build_staged_ai_day(day_name, index) for index, day_name in enumerate(DAYS))])
+    prompts: list[tuple[str, str, int | None, str | None]] = []
+
+    def fake_call(_config, system_prompt, user_prompt, max_tokens=None, provider=None):
+        prompts.append((system_prompt, user_prompt, max_tokens, provider))
+        return next(responses)
+
+    monkeypatch.setattr(planner_module, "_call_llm_json", fake_call)
+
+    plan = planner_module._generate_ai_plan(
+        request,
+        strategy,
+        AppConfig(ai_provider="groq", groq_api_key="test-key"),
+        provider="groq",
+    )
+
+    assert len(prompts) == 8
+    assert all(day.source == "AI" for day in plan.days)
+    assert len({day.breakfast.shared_base for day in plan.days}) == 7
+    assert len({day.dinner.shared_base for day in plan.days}) == 7
+    assert plan.shopping_list
+
+
+def test_generate_ai_plan_rejects_weak_staged_provider_output(monkeypatch) -> None:
+    request = build_request()
+    strategy = generate_fallback_wellness_strategy(request)
+    responses = iter(
+        [
+            build_staged_plan_skeleton(),
+            build_staged_ai_day("Lunedi", 0),
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+        ]
+    )
+
+    def fake_call(_config, system_prompt, user_prompt, max_tokens=None, provider=None):
+        return next(responses)
+
+    monkeypatch.setattr(planner_module, "_call_llm_json", fake_call)
+
+    with pytest.raises(RuntimeError, match="giorni validi su 7"):
+        planner_module._generate_ai_plan(
+            request,
+            strategy,
+            AppConfig(ai_provider="groq", groq_api_key="test-key"),
+            provider="groq",
+        )
+
+
+def test_generate_diet_from_strategy_warns_when_one_day_is_completed_locally(monkeypatch) -> None:
+    request = build_request()
+    strategy = generate_fallback_wellness_strategy(request)
+    staged_days = [build_staged_ai_day(day_name, index) for index, day_name in enumerate(DAYS)]
+    staged_days[-1] = {}
+    responses = iter([build_staged_plan_skeleton(), *staged_days, {}])
+
+    def fake_call(_config, system_prompt, user_prompt, max_tokens=None, provider=None):
+        return next(responses)
+
+    monkeypatch.setattr(planner_module, "_call_llm_json", fake_call)
+
+    result = generate_diet_from_strategy(
+        request,
+        strategy,
+        AppConfig(ai_provider="groq", groq_api_key="test-key"),
+    )
+
+    assert result.source_label == "Groq | llama-3.3-70b-versatile"
+    assert result.warning is not None
+    assert "6 giorni su 7" in result.warning
+    assert "planner locale" in result.warning
+    assert result.plan.days[-1].source == "Fallback"
 
 
 def test_strategy_uses_groq_when_openrouter_provider_fails(monkeypatch) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 import math
 from typing import Any
@@ -19,6 +20,8 @@ from dietapp.models import (
     WellnessStrategy,
 )
 from dietapp.planning.common import (
+    AI_PLAN_DAY_MAX_TOKENS,
+    AI_PLAN_SKELETON_MAX_TOKENS,
     PLAN_SYSTEM_PROMPT,
     STRATEGY_SYSTEM_PROMPT,
     ProviderFailure,
@@ -40,6 +43,8 @@ from dietapp.planning.strategy import generate_fallback_wellness_strategy
 
 GROQ_REQUEST_TOKEN_BUDGET = 11500
 GROQ_TOKEN_SAFETY_MARGIN = 500
+MIN_ACCEPTABLE_AI_DAYS = 5
+DAY_GENERATION_MAX_ATTEMPTS = 2
 
 
 def _call_llm_json(
@@ -156,7 +161,22 @@ def build_strategy_prompt_preview(request: PlanningRequest) -> str:
 
 
 def build_plan_prompt_preview(request: PlanningRequest, strategy: WellnessStrategy) -> str:
-    return _format_prompt_preview(PLAN_SYSTEM_PROMPT, _build_plan_ai_prompt(request, strategy))
+    preview_request = _apply_strategy_targets(request, strategy)
+    fallback_plan = generate_fallback_plan(preview_request, strategy)
+    preview_skeleton = _normalize_plan_skeleton({}, fallback_plan)
+    stage_one_prompt = _format_prompt_preview(PLAN_SYSTEM_PROMPT, _build_plan_skeleton_ai_prompt(preview_request, strategy))
+    stage_two_prompt = _format_prompt_preview(
+        PLAN_SYSTEM_PROMPT,
+        _build_plan_day_ai_prompt(preview_request, strategy, preview_skeleton["days"][0], []),
+    )
+    return "\n\n".join(
+        [
+            "=== FASE 1: SKELETON SETTIMANALE ===",
+            stage_one_prompt,
+            "=== FASE 2: DETTAGLIO GIORNALIERO (ESEMPIO) ===",
+            stage_two_prompt,
+        ]
+    )
 
 
 def _format_prompt_preview(system_prompt: str, user_prompt: str) -> str:
@@ -214,23 +234,23 @@ Restituisci JSON con questo schema esatto:
 """.strip()
 
 
-def _build_plan_day_schema_prompt(day_name: str) -> str:
+def _build_plan_skeleton_day_schema_prompt(day_name: str) -> str:
     return f"""
         {{
             "day": "{day_name}",
+            "theme": "string",
+            "variety_guardrail": "string",
             "breakfast": {{
                 "shared_base": "string",
-                    "person_one": {{"title": "string", "description": "string", "portion_label": "string", "ingredients": [{{"name": "string", "quantity": 120, "unit": "g"}}], "prep_notes": "string"}},
-                    "person_two": {{"title": "string", "description": "string", "portion_label": "string", "ingredients": [{{"name": "string", "quantity": 120, "unit": "g"}}], "prep_notes": "string"}},
+                "direction": "string",
                 "prep_minutes": 10,
                 "leftover_friendly": false,
                 "reuse_from_previous": "string",
-                "kitchen_load": "Basso"
+                "kitchen_load": "Molto basso"
             }},
             "lunch": {{
                 "shared_base": "string",
-                    "person_one": {{"title": "string", "description": "string", "portion_label": "string", "ingredients": [{{"name": "string", "quantity": 120, "unit": "g"}}], "prep_notes": "string"}},
-                    "person_two": {{"title": "string", "description": "string", "portion_label": "string", "ingredients": [{{"name": "string", "quantity": 120, "unit": "g"}}], "prep_notes": "string"}},
+                "direction": "string",
                 "prep_minutes": 10,
                 "leftover_friendly": true,
                 "reuse_from_previous": "string",
@@ -238,8 +258,7 @@ def _build_plan_day_schema_prompt(day_name: str) -> str:
             }},
             "dinner": {{
                 "shared_base": "string",
-                    "person_one": {{"title": "string", "description": "string", "portion_label": "string", "ingredients": [{{"name": "string", "quantity": 150, "unit": "g"}}], "prep_notes": "string"}},
-                    "person_two": {{"title": "string", "description": "string", "portion_label": "string", "ingredients": [{{"name": "string", "quantity": 150, "unit": "g"}}], "prep_notes": "string"}},
+                "direction": "string",
                 "prep_minutes": 25,
                 "leftover_friendly": true,
                 "reuse_from_previous": "string",
@@ -249,15 +268,19 @@ def _build_plan_day_schema_prompt(day_name: str) -> str:
         """.strip()
 
 
-def _build_plan_days_schema_prompt() -> str:
-    return ",\n".join(_build_plan_day_schema_prompt(day_name) for day_name in DAYS)
+def _build_plan_skeleton_days_schema_prompt() -> str:
+    return ",\n".join(_build_plan_skeleton_day_schema_prompt(day_name) for day_name in DAYS)
 
 
 def _build_plan_ai_prompt(request: PlanningRequest, strategy: WellnessStrategy) -> str:
+    return _build_plan_skeleton_ai_prompt(request, strategy)
+
+
+def _build_plan_skeleton_ai_prompt(request: PlanningRequest, strategy: WellnessStrategy) -> str:
     payload = request.to_dict()
     strategy_payload = strategy.to_dict()
     return f"""
-Costruisci un piano alimentare settimanale in italiano per una coppia usando questa strategia benessere come fonte principale.
+Costruisci prima lo skeleton settimanale di un piano alimentare in italiano per una coppia usando questa strategia benessere come fonte principale.
 
 Payload coppia:
 {_compact_json_dumps(payload)}
@@ -267,21 +290,17 @@ Strategia benessere approvata:
 
 Regole:
 - La strategia sopra e il punto di partenza: i pasti devono rispettare focus, target derivati e linee guida di ciascuna persona.
-- Genera sempre 7 giorni, da Lunedi a Domenica.
-- Il JSON e valido solo se contiene esattamente 7 oggetti in "days", ciascuno con breakfast, lunch e dinner valorizzati; non fermarti a 5 o 6 giorni e non usare null nei pasti.
+- Genera sempre 7 giorni, da Lunedi a Domenica, con esattamente 7 oggetti in "days".
 - L'ultimo oggetto di "days" deve essere Domenica.
-- Evita di ripetere la stessa combinazione completa di colazione, pranzo e cena in giorni diversi: la settimana deve avere una rotazione credibile.
+- Non scrivere ancora il dettaglio completo delle due varianti per persona: qui serve solo l'ossatura della settimana.
+- Evita di ripetere la stessa combinazione di shared_base tra i giorni: la settimana deve avere una rotazione credibile gia nello skeleton.
 - Le ricette devono essere concrete e riconoscibili come cucina italiana domestica o tradizione regionale italiana alleggerita.
 - Minimizza il lavoro in cucina con basi comuni, batch cooking, ingredienti ripetuti e avanzi intelligenti.
-- Usa gli stessi nomi presenti nel payload per person_one e person_two.
-- Se allow_protein_powder=true, puoi usare proteine in polvere solo in modo sobrio, massimo una porzione al giorno e solo quando aiutano davvero il target proteico.
-- Se allow_protein_powder=false, evita di inserirle nel piano per quella persona.
-- Mantieni shared_base, description e prep_notes brevi e operativi; ogni ingredients deve avere al massimo 6 elementi davvero usati nel piatto.
-- Ogni elemento di ingredients deve essere un oggetto con name, quantity e unit; usa quantita realistiche per una persona.
+- Mantieni theme, shared_base e direction brevi e operativi.
 - Mantieni le cene entro il tempo massimo richiesto quando possibile.
 - Evita ingredienti esclusi, allergie e cibi non graditi.
 - Usa budget e cucine preferite per orientare la scelta degli ingredienti, ma resta in un perimetro di ricette italiane.
-- La lista della spesa deve essere aggregata per categoria.
+- prep_tasks e planning_notes devono essere sintetici.
 
 Restituisci JSON con questo schema esatto:
 {{
@@ -289,16 +308,83 @@ Restituisci JSON con questo schema esatto:
   "strategy": "string",
   "prep_tasks": ["string"],
   "planning_notes": ["string"],
-  "shopping_list": {{
-    "Verdure": ["string"],
-    "Proteine": ["string"],
-    "Supplementi": ["string"],
-    "Dispensa": ["string"],
-    "Frigo": ["string"]
-  }},
   "days": [
-{_build_plan_days_schema_prompt()}
+{_build_plan_skeleton_days_schema_prompt()}
   ]
+}}
+""".strip()
+
+
+def _build_plan_day_ai_prompt(
+        request: PlanningRequest,
+        strategy: WellnessStrategy,
+        skeleton_day: dict[str, Any],
+        approved_days_summary: list[dict[str, Any]],
+        feedback: str | None = None,
+) -> str:
+        payload = request.to_dict()
+        strategy_payload = strategy.to_dict()
+        feedback_block = ""
+        if feedback:
+                feedback_block = f"\nCorrezione obbligatoria rispetto al tentativo precedente:\n- {feedback}\n"
+
+        return f"""
+Espandi un solo giorno della settimana in un giorno completo con breakfast, lunch e dinner per entrambe le persone.
+
+Payload coppia:
+{_compact_json_dumps(payload)}
+
+Strategia benessere approvata:
+{_compact_json_dumps(strategy_payload)}
+
+Skeleton del giorno da espandere:
+{_compact_json_dumps(skeleton_day)}
+
+Giorni gia approvati da non ripetere:
+{_compact_json_dumps(approved_days_summary)}
+{feedback_block}
+Regole:
+- Restituisci solo il giorno richiesto nello skeleton, non l'intera settimana.
+- breakfast, lunch e dinner devono essere tutti valorizzati.
+- Usa sempre le chiavi person_one e person_two.
+- Non ripetere shared_base, titoli e ingredienti principali dei giorni gia approvati in modo troppo simile.
+- Le ricette devono restare italiane, credibili e leggere da eseguire in casa.
+- Mantieni description e prep_notes brevi e operativi.
+- ingredients deve essere una lista di stringhe essenziali, massimo 6 ingredienti davvero usati nel piatto.
+- Se allow_protein_powder=true, puoi usarle solo con moderazione; se false, non inserirle.
+- Rispetta i tempi di prep e il kitchen_load dello skeleton quando possibile.
+- Evita ingredienti esclusi, allergie e cibi non graditi.
+
+Restituisci JSON con questo schema esatto:
+{{
+    "day": "{skeleton_day.get('day', 'Giorno')}",
+    "breakfast": {{
+        "shared_base": "string",
+        "person_one": {{"title": "string", "description": "string", "ingredients": ["string"], "prep_notes": "string"}},
+        "person_two": {{"title": "string", "description": "string", "ingredients": ["string"], "prep_notes": "string"}},
+        "prep_minutes": 10,
+        "leftover_friendly": false,
+        "reuse_from_previous": "string",
+        "kitchen_load": "Molto basso"
+    }},
+    "lunch": {{
+        "shared_base": "string",
+        "person_one": {{"title": "string", "description": "string", "ingredients": ["string"], "prep_notes": "string"}},
+        "person_two": {{"title": "string", "description": "string", "ingredients": ["string"], "prep_notes": "string"}},
+        "prep_minutes": 10,
+        "leftover_friendly": true,
+        "reuse_from_previous": "string",
+        "kitchen_load": "Basso"
+    }},
+    "dinner": {{
+        "shared_base": "string",
+        "person_one": {{"title": "string", "description": "string", "ingredients": ["string"], "prep_notes": "string"}},
+        "person_two": {{"title": "string", "description": "string", "ingredients": ["string"], "prep_notes": "string"}},
+        "prep_minutes": 25,
+        "leftover_friendly": true,
+        "reuse_from_previous": "string",
+        "kitchen_load": "Medio"
+    }}
 }}
 """.strip()
 
@@ -396,6 +482,256 @@ def _normalize_ai_plan(
         model_source=model_source,
         shopping_list_details=shopping_list_details,
         coherence_checks=coherence_checks,
+    )
+
+
+def _normalize_plan_skeleton(raw_skeleton: Any, fallback_plan: WeeklyPlan) -> dict[str, Any]:
+    raw_payload = raw_skeleton if isinstance(raw_skeleton, dict) else {}
+    raw_days = raw_payload.get("days") if isinstance(raw_payload.get("days"), list) else []
+    fallback_payload = _fallback_skeleton_from_plan(fallback_plan)
+
+    days: list[dict[str, Any]] = []
+    for index, day_name in enumerate(DAYS):
+        raw_day = raw_days[index] if index < len(raw_days) and isinstance(raw_days[index], dict) else {}
+        fallback_day = fallback_payload["days"][index]
+        days.append(
+            {
+                "day": day_name,
+                "theme": str(raw_day.get("theme") or fallback_day["theme"]).strip() or fallback_day["theme"],
+                "variety_guardrail": str(
+                    raw_day.get("variety_guardrail") or fallback_day["variety_guardrail"]
+                ).strip()
+                or fallback_day["variety_guardrail"],
+                "breakfast": _normalize_skeleton_meal(raw_day.get("breakfast"), fallback_day["breakfast"]),
+                "lunch": _normalize_skeleton_meal(raw_day.get("lunch"), fallback_day["lunch"]),
+                "dinner": _normalize_skeleton_meal(raw_day.get("dinner"), fallback_day["dinner"]),
+            }
+        )
+
+    return {
+        "title": str(raw_payload.get("title") or fallback_payload["title"]).strip() or fallback_payload["title"],
+        "strategy": str(raw_payload.get("strategy") or fallback_payload["strategy"]).strip() or fallback_payload["strategy"],
+        "prep_tasks": _to_string_list(raw_payload.get("prep_tasks")) or fallback_payload["prep_tasks"],
+        "planning_notes": _to_string_list(raw_payload.get("planning_notes")) or fallback_payload["planning_notes"],
+        "days": days,
+    }
+
+
+def _fallback_skeleton_from_plan(fallback_plan: WeeklyPlan) -> dict[str, Any]:
+    return {
+        "title": fallback_plan.title,
+        "strategy": fallback_plan.strategy,
+        "prep_tasks": list(fallback_plan.prep_tasks),
+        "planning_notes": list(fallback_plan.planning_notes),
+        "days": [_fallback_skeleton_from_day(day) for day in fallback_plan.days],
+    }
+
+
+def _fallback_skeleton_from_day(day: DayPlan) -> dict[str, Any]:
+    return {
+        "day": day.day,
+        "theme": day.dinner.shared_base,
+        "variety_guardrail": f"Mantieni {day.day} distinto dagli altri giorni della settimana.",
+        "breakfast": _fallback_skeleton_from_meal(day.breakfast),
+        "lunch": _fallback_skeleton_from_meal(day.lunch),
+        "dinner": _fallback_skeleton_from_meal(day.dinner),
+    }
+
+
+def _fallback_skeleton_from_meal(meal: MealSlot) -> dict[str, Any]:
+    return {
+        "shared_base": meal.shared_base,
+        "direction": meal.person_one.title,
+        "prep_minutes": meal.prep_minutes,
+        "leftover_friendly": meal.leftover_friendly,
+        "reuse_from_previous": meal.reuse_from_previous,
+        "kitchen_load": meal.kitchen_load,
+    }
+
+
+def _normalize_skeleton_meal(raw: Any, fallback_meal: dict[str, Any]) -> dict[str, Any]:
+    payload = raw if isinstance(raw, dict) else {}
+    return {
+        "shared_base": str(payload.get("shared_base") or fallback_meal["shared_base"]).strip()
+        or fallback_meal["shared_base"],
+        "direction": str(payload.get("direction") or payload.get("description") or fallback_meal["direction"]).strip()
+        or fallback_meal["direction"],
+        "prep_minutes": _coerce_int(payload.get("prep_minutes"), fallback_meal["prep_minutes"]),
+        "leftover_friendly": _coerce_bool(payload.get("leftover_friendly"), fallback_meal["leftover_friendly"]),
+        "reuse_from_previous": str(payload.get("reuse_from_previous") or fallback_meal["reuse_from_previous"]),
+        "kitchen_load": str(payload.get("kitchen_load") or fallback_meal["kitchen_load"]),
+    }
+
+
+def _generate_staged_ai_plan(
+    llm_call: Callable[[str, str, int | None], dict[str, Any]],
+    request: PlanningRequest,
+    strategy: WellnessStrategy,
+    model_source: str,
+) -> WeeklyPlan:
+    fallback_plan = generate_fallback_plan(request, strategy)
+    skeleton = _normalize_plan_skeleton(
+        llm_call(PLAN_SYSTEM_PROMPT, _build_plan_skeleton_ai_prompt(request, strategy), AI_PLAN_SKELETON_MAX_TOKENS),
+        fallback_plan,
+    )
+
+    approved_days: list[DayPlan] = []
+    for index, skeleton_day in enumerate(skeleton["days"]):
+        fallback_day = fallback_plan.days[index]
+        approved_days.append(
+            _generate_ai_day_with_repair(llm_call, request, strategy, skeleton_day, fallback_day, approved_days)
+        )
+
+    plan = _build_weekly_plan_from_generated_days(skeleton, approved_days, request, fallback_plan, model_source)
+    ai_days = _count_ai_generated_days(plan)
+    if ai_days < MIN_ACCEPTABLE_AI_DAYS:
+        raise RuntimeError(
+            f"La pipeline giornaliera ha prodotto solo {ai_days} giorni validi su 7; questo provider non e stato abbastanza stabile."
+        )
+    return plan
+
+
+def _generate_ai_day_with_repair(
+    llm_call: Callable[[str, str, int | None], dict[str, Any]],
+    request: PlanningRequest,
+    strategy: WellnessStrategy,
+    skeleton_day: dict[str, Any],
+    fallback_day: DayPlan,
+    approved_days: list[DayPlan],
+) -> DayPlan:
+    feedback: str | None = None
+
+    for _ in range(DAY_GENERATION_MAX_ATTEMPTS):
+        raw_day = llm_call(
+            PLAN_SYSTEM_PROMPT,
+            _build_plan_day_ai_prompt(
+                request,
+                strategy,
+                skeleton_day,
+                _summarize_approved_days(approved_days),
+                feedback,
+            ),
+            AI_PLAN_DAY_MAX_TOKENS,
+        )
+        candidate = _normalize_ai_day(raw_day, request, fallback_day)
+        validation_error = _validate_generated_day(candidate, approved_days)
+        if validation_error is None:
+            return candidate
+        feedback = validation_error
+
+    return fallback_day
+
+
+def _normalize_ai_day(raw_day: Any, request: PlanningRequest, fallback_day: DayPlan) -> DayPlan:
+    payload = raw_day if isinstance(raw_day, dict) else {}
+    is_complete = _day_payload_is_complete(payload)
+    return DayPlan(
+        day=fallback_day.day,
+        breakfast=_normalize_meal_slot(payload.get("breakfast"), request, fallback_day.breakfast, "breakfast"),
+        lunch=_normalize_meal_slot(payload.get("lunch"), request, fallback_day.lunch, "lunch"),
+        dinner=_normalize_meal_slot(payload.get("dinner"), request, fallback_day.dinner, "dinner"),
+        source="AI" if is_complete else "Fallback",
+    )
+
+
+def _validate_generated_day(day: DayPlan, approved_days: list[DayPlan]) -> str | None:
+    if day.source != "AI":
+        return "Restituisci breakfast, lunch e dinner completi per entrambe le persone; la risposta precedente era parziale o troppo vuota."
+
+    day_signature = _day_menu_signature(day)
+    approved_signatures = {_day_menu_signature(approved_day) for approved_day in approved_days}
+    if day_signature in approved_signatures:
+        return "La risposta precedente ripeteva troppo uno dei giorni gia approvati. Cambia almeno due shared_base e gli ingredienti principali del giorno."
+
+    return None
+
+
+def _day_payload_is_complete(raw_day: Any) -> bool:
+    if not isinstance(raw_day, dict):
+        return False
+
+    return all(_meal_payload_has_ai_content(raw_day.get(meal_key)) for meal_key in ("breakfast", "lunch", "dinner"))
+
+
+def _meal_payload_has_ai_content(raw_meal: Any) -> bool:
+    if not isinstance(raw_meal, dict):
+        return False
+    if not any(value not in (None, "", [], {}) for value in raw_meal.values()):
+        return False
+
+    for person_key in ("person_one", "person_two"):
+        person_payload = raw_meal.get(person_key)
+        if isinstance(person_payload, dict) and any(value not in (None, "", [], {}) for value in person_payload.values()):
+            continue
+        if isinstance(person_payload, str) and person_payload.strip():
+            continue
+        return False
+
+    return True
+
+
+def _summarize_approved_days(days: list[DayPlan]) -> list[dict[str, Any]]:
+    return [
+        {
+            "day": day.day,
+            "breakfast": {
+                "shared_base": day.breakfast.shared_base,
+                "person_one_title": day.breakfast.person_one.title,
+                "person_two_title": day.breakfast.person_two.title,
+            },
+            "lunch": {
+                "shared_base": day.lunch.shared_base,
+                "person_one_title": day.lunch.person_one.title,
+                "person_two_title": day.lunch.person_two.title,
+            },
+            "dinner": {
+                "shared_base": day.dinner.shared_base,
+                "person_one_title": day.dinner.person_one.title,
+                "person_two_title": day.dinner.person_two.title,
+            },
+            "source": day.source,
+        }
+        for day in days
+    ]
+
+
+def _build_weekly_plan_from_generated_days(
+    skeleton: dict[str, Any],
+    days: list[DayPlan],
+    request: PlanningRequest,
+    fallback_plan: WeeklyPlan,
+    model_source: str,
+) -> WeeklyPlan:
+    shopping_list_details = aggregate_shopping_details(days)
+    shopping_list = shopping_details_to_legacy_lists(shopping_list_details) or fallback_plan.shopping_list
+    coherence_checks = build_coherence_checks(days, request.preferences.max_prep_minutes)
+
+    return WeeklyPlan(
+        title=str(skeleton.get("title") or fallback_plan.title),
+        strategy=str(skeleton.get("strategy") or fallback_plan.strategy),
+        prep_tasks=_to_string_list(skeleton.get("prep_tasks")) or fallback_plan.prep_tasks,
+        planning_notes=_to_string_list(skeleton.get("planning_notes")) or fallback_plan.planning_notes,
+        shopping_list=shopping_list,
+        days=days,
+        model_source=model_source,
+        shopping_list_details=shopping_list_details,
+        coherence_checks=coherence_checks,
+    )
+
+
+def _count_ai_generated_days(plan: WeeklyPlan) -> int:
+    return sum(1 for day in plan.days if day.source == "AI")
+
+
+def _build_partial_ai_plan_warning(plan: WeeklyPlan, source_label: str) -> str | None:
+    ai_days = _count_ai_generated_days(plan)
+    fallback_days = len(plan.days) - ai_days
+    if fallback_days <= 0:
+        return None
+
+    return (
+        f"Dieta settimanale: {ai_days} giorni su 7 sono arrivati da {source_label}; "
+        f"{fallback_days} giorni sono stati completati dal planner locale per mantenere il piano valido."
     )
 
 

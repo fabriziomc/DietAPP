@@ -17,7 +17,7 @@ Do not include markdown fences.
 PLAN_SYSTEM_PROMPT = """
 You are a meal planning assistant for a couple.
 Return JSON only.
-Design one weekly plan with breakfast, lunch and dinner for 7 days.
+Follow the exact task requested in the user prompt: sometimes you must outline a weekly skeleton, sometimes expand a single day.
 Use recognizable Italian home-style recipes and Italian ingredient combinations unless an explicit constraint prevents it.
 The plan must follow the supplied wellbeing strategy, minimize kitchen work by reusing ingredients, batch cooking and leftovers,
 and keep a shared base meal whenever possible before splitting into omnivore and vegetarian variants.
@@ -26,6 +26,8 @@ Do not include markdown fences.
 
 AI_STRATEGY_MAX_TOKENS = 2500
 AI_PLAN_MAX_TOKENS = 7000
+AI_PLAN_SKELETON_MAX_TOKENS = 2200
+AI_PLAN_DAY_MAX_TOKENS = 1400
 
 KEYWORD_BUCKETS = {
     "Proteine": [

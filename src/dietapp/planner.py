@@ -7,10 +7,11 @@ from dietapp.models import PlanningRequest, WeeklyPlan, WellnessStrategy
 from dietapp.planning.ai import (
     _apply_strategy_targets,
     _build_local_provider_warning,
-    _build_plan_ai_prompt,
+    _build_partial_ai_plan_warning,
     _build_provider_failure,
     _build_provider_recovery_warning,
     _build_provider_source_label,
+    _generate_staged_ai_plan,
     _build_strategy_ai_prompt,
     _format_prompt_preview,
     _format_provider_exception,
@@ -102,14 +103,18 @@ def generate_diet_from_strategy(
         try:
             plan = _generate_ai_plan(enriched_request, strategy, config, provider)
             source_label = _build_provider_source_label(config, provider)
-            return DietResult(
-                plan=plan,
-                source_label=source_label,
-                warning=_build_provider_recovery_warning(
+            warning = _combine_warnings(
+                _build_provider_recovery_warning(
                     "Dieta settimanale",
                     failures,
                     source_label,
                 ),
+                _build_partial_ai_plan_warning(plan, source_label),
+            )
+            return DietResult(
+                plan=plan,
+                source_label=source_label,
+                warning=warning,
             )
         except Exception as exc:
             failures.append(_build_provider_failure(exc, config, provider))
@@ -162,15 +167,14 @@ def _generate_ai_plan(
     config: AppConfig,
     provider: str | None = None,
 ) -> WeeklyPlan:
-    raw_plan = _call_llm_json(
-        config,
-        PLAN_SYSTEM_PROMPT,
-        _build_plan_ai_prompt(request, strategy),
-        max_tokens=AI_PLAN_MAX_TOKENS,
-        provider=provider,
-    )
-    return _normalize_ai_plan(
-        raw_plan,
+    return _generate_staged_ai_plan(
+        lambda system_prompt, user_prompt, max_tokens: _call_llm_json(
+            config,
+            system_prompt,
+            user_prompt,
+            max_tokens=max_tokens,
+            provider=provider,
+        ),
         request,
         strategy,
         _build_provider_source_label(config, provider),
@@ -192,6 +196,11 @@ def _call_llm_json(
         max_tokens=max_tokens,
         provider=provider,
     )
+
+
+def _combine_warnings(*messages: str | None) -> str | None:
+    resolved_messages = [message for message in messages if message]
+    return "\n\n".join(resolved_messages) if resolved_messages else None
 
 
 __all__ = [
