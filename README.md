@@ -59,13 +59,13 @@ Esempio OpenRouter con modello gratuito:
 AI_PROVIDER=openrouter
 OPENROUTER_API_KEY=sk-or-...
 OPENROUTER_MODEL=google/gemma-4-31b-it:free
-OPENROUTER_FALLBACK_MODELS=google/gemma-4-26b-a4b-it:free,qwen/qwen3-next-80b-a3b-instruct:free,openai/gpt-oss-120b:free,openai/gpt-oss-20b:free
+OPENROUTER_FALLBACK_MODELS=google/gemma-4-26b-a4b-it:free,qwen/qwen3-next-80b-a3b-instruct:free,openai/gpt-oss-120b:free
 OPENROUTER_SITE_URL=https://tuo-app.streamlit.app
 OPENROUTER_APP_NAME=DietAPP
 ```
 
 `OPENROUTER_SITE_URL` e `OPENROUTER_APP_NAME` sono opzionali ma consigliati: vengono inviati come header `HTTP-Referer` e `X-OpenRouter-Title` nelle richieste API.
-`OPENROUTER_FALLBACK_MODELS` e opzionale: se il modello principale e rate-limited, OpenRouter provera automaticamente questi modelli in ordine usando il routing `fallback`.
+`OPENROUTER_FALLBACK_MODELS` e opzionale: se il modello principale e rate-limited, OpenRouter provera automaticamente questi modelli in ordine usando il routing `fallback`. OpenRouter accetta al massimo 3 fallback per richiesta; DietAPP usa solo i primi 3 modelli unici della lista.
 Se `AI_PROVIDER=openrouter` e hai anche `GROQ_API_KEY`, l'app prova prima OpenRouter, poi Groq, e solo dopo passa al planner locale.
 
 Modelli consigliati su Groq per questa app:
@@ -92,7 +92,7 @@ Il planner locale ora filtra gli ingredienti esclusi, usa davvero budget e cucin
 4. copia la chiave nel file `.env` come `OPENROUTER_API_KEY`
 5. imposta `AI_PROVIDER=openrouter`
 6. se l'app e pubblicata, aggiungi anche `OPENROUTER_SITE_URL` con l'URL pubblico della tua app e lascia `OPENROUTER_APP_NAME=DietAPP`
-7. opzionalmente imposta `OPENROUTER_FALLBACK_MODELS` con una lista separata da virgole di modelli alternativi, per esempio `google/gemma-4-26b-a4b-it:free,qwen/qwen3-next-80b-a3b-instruct:free,openai/gpt-oss-120b:free,openai/gpt-oss-20b:free`
+7. opzionalmente imposta `OPENROUTER_FALLBACK_MODELS` con una lista separata da virgole di modelli alternativi, per esempio `google/gemma-4-26b-a4b-it:free,qwen/qwen3-next-80b-a3b-instruct:free,openai/gpt-oss-120b:free`; evita di superare 3 fallback per richiesta
 
 Nota pratica: i modelli gratuiti su OpenRouter possono avere disponibilita e rate limit variabili nel tempo, quindi conviene tenerlo come provider alternativo accanto a Groq e configurare uno o piu fallback automatici.
 

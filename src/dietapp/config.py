@@ -9,6 +9,7 @@ DEFAULT_OPENROUTER_FALLBACK_MODELS = (
     "qwen/qwen3-next-80b-a3b-instruct:free",
     "openai/gpt-oss-120b:free",
 )
+OPENROUTER_MAX_FALLBACK_MODELS = 3
 
 
 def _split_csv_env(raw_value: str | None) -> tuple[str, ...]:
@@ -164,6 +165,8 @@ class AppConfig:
             if not normalized or normalized == primary_model or normalized in fallbacks:
                 continue
             fallbacks.append(normalized)
+            if len(fallbacks) >= OPENROUTER_MAX_FALLBACK_MODELS:
+                break
         return tuple(fallbacks)
 
     def get_provider_attempt_order(self) -> tuple[str, ...]:

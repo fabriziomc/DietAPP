@@ -195,6 +195,26 @@ def test_openrouter_fallback_models_skip_primary_and_duplicates() -> None:
     )
 
 
+def test_openrouter_fallback_models_are_capped_to_api_limit() -> None:
+    config = AppConfig(
+        ai_provider="openrouter",
+        openrouter_api_key="test-openrouter-key",
+        openrouter_model="google/gemma-4-31b-it:free",
+        openrouter_fallback_models=(
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "qwen/qwen3-next-80b-a3b-instruct:free",
+            "openai/gpt-oss-120b:free",
+            "anthropic/claude-3.5-haiku",
+        ),
+    )
+
+    assert config.get_model_fallbacks() == (
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "qwen/qwen3-next-80b-a3b-instruct:free",
+        "openai/gpt-oss-120b:free",
+    )
+
+
 def test_profile_values_are_persisted_locally(tmp_path: Path) -> None:
     profile_path = tmp_path / "household_profile.json"
     save_profile_form_values(
@@ -416,6 +436,8 @@ def test_call_llm_json_sets_openrouter_headers(monkeypatch) -> None:
             openrouter_fallback_models=(
                 "meta-llama/llama-3.3-70b-instruct:free",
                 "qwen/qwen3-next-80b-a3b-instruct:free",
+                "openai/gpt-oss-120b:free",
+                "anthropic/claude-3.5-haiku",
             ),
             openrouter_site_url="https://dietapp.example",
             openrouter_app_name="DietAPP",
@@ -436,6 +458,7 @@ def test_call_llm_json_sets_openrouter_headers(monkeypatch) -> None:
         "models": [
             "meta-llama/llama-3.3-70b-instruct:free",
             "qwen/qwen3-next-80b-a3b-instruct:free",
+            "openai/gpt-oss-120b:free",
         ],
         "route": "fallback",
     }
