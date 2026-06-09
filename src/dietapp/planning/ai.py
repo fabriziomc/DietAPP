@@ -582,6 +582,15 @@ def _generate_staged_ai_plan(
             _generate_ai_day_with_repair(llm_call, request, strategy, skeleton_day, fallback_day, approved_days)
         )
 
+    approved_days = _recover_fallback_days(
+        llm_call,
+        request,
+        strategy,
+        skeleton["days"],
+        fallback_plan.days,
+        approved_days,
+    )
+
     plan = _build_weekly_plan_from_generated_days(skeleton, approved_days, request, fallback_plan, model_source)
     ai_days = _count_ai_generated_days(plan)
     if ai_days < MIN_ACCEPTABLE_AI_DAYS:
@@ -598,8 +607,9 @@ def _generate_ai_day_with_repair(
     skeleton_day: dict[str, Any],
     fallback_day: DayPlan,
     approved_days: list[DayPlan],
+    initial_feedback: str | None = None,
 ) -> DayPlan:
-    feedback: str | None = None
+    feedback = initial_feedback
 
     for _ in range(DAY_GENERATION_MAX_ATTEMPTS):
         raw_day = llm_call(
@@ -620,6 +630,44 @@ def _generate_ai_day_with_repair(
         feedback = validation_error
 
     return fallback_day
+
+
+def _recover_fallback_days(
+    llm_call: Callable[[str, str, int | None], dict[str, Any]],
+    request: PlanningRequest,
+    strategy: WellnessStrategy,
+    skeleton_days: list[dict[str, Any]],
+    fallback_days: list[DayPlan],
+    days: list[DayPlan],
+) -> list[DayPlan]:
+    recovered_days = list(days)
+
+    for index, day in enumerate(recovered_days):
+        if day.source == "AI":
+            continue
+
+        approved_days = [
+            candidate
+            for candidate_index, candidate in enumerate(recovered_days)
+            if candidate_index != index and candidate.source == "AI"
+        ]
+        if not approved_days:
+            continue
+
+        recovered_days[index] = _generate_ai_day_with_repair(
+            llm_call,
+            request,
+            strategy,
+            skeleton_days[index],
+            fallback_days[index],
+            approved_days,
+            initial_feedback=(
+                f"Il giorno {fallback_days[index].day} e rimasto incompleto nella prima passata. "
+                "Riprova con un menu completo, valido e chiaramente diverso dai giorni gia approvati."
+            ),
+        )
+
+    return recovered_days
 
 
 def _normalize_ai_day(raw_day: Any, request: PlanningRequest, fallback_day: DayPlan) -> DayPlan:

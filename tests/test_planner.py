@@ -603,27 +603,51 @@ def test_generate_ai_plan_uses_staged_pipeline(monkeypatch) -> None:
     assert plan.shopping_list
 
 
-def test_generate_ai_plan_rejects_weak_staged_provider_output(monkeypatch) -> None:
+def test_generate_ai_plan_recovers_fallback_days_on_second_pass(monkeypatch) -> None:
     request = build_request()
     strategy = generate_fallback_wellness_strategy(request)
     responses = iter(
         [
             build_staged_plan_skeleton(),
             build_staged_ai_day("Lunedi", 0),
+            build_staged_ai_day("Martedi", 1),
+            build_staged_ai_day("Mercoledi", 2),
             {},
             {},
             {},
             {},
+            build_staged_ai_day("Sabato", 5),
             {},
             {},
-            {},
-            {},
-            {},
-            {},
-            {},
-            {},
-            {},
+            build_staged_ai_day("Giovedi", 3),
+            build_staged_ai_day("Venerdi", 4),
+            build_staged_ai_day("Domenica", 6),
         ]
+    )
+
+    def fake_call(_config, system_prompt, user_prompt, max_tokens=None, provider=None):
+        return next(responses)
+
+    monkeypatch.setattr(planner_module, "_call_llm_json", fake_call)
+
+    plan = planner_module._generate_ai_plan(
+        request,
+        strategy,
+        AppConfig(ai_provider="groq", groq_api_key="test-key"),
+        provider="groq",
+    )
+
+    assert all(day.source == "AI" for day in plan.days)
+    assert plan.days[3].day == "Giovedi"
+    assert plan.days[4].day == "Venerdi"
+    assert plan.days[6].day == "Domenica"
+
+
+def test_generate_ai_plan_rejects_weak_staged_provider_output(monkeypatch) -> None:
+    request = build_request()
+    strategy = generate_fallback_wellness_strategy(request)
+    responses = iter(
+        [build_staged_plan_skeleton(), build_staged_ai_day("Lunedi", 0), *([{}] * 30)]
     )
 
     def fake_call(_config, system_prompt, user_prompt, max_tokens=None, provider=None):
@@ -645,7 +669,7 @@ def test_generate_diet_from_strategy_warns_when_one_day_is_completed_locally(mon
     strategy = generate_fallback_wellness_strategy(request)
     staged_days = [build_staged_ai_day(day_name, index) for index, day_name in enumerate(DAYS)]
     staged_days[-1] = {}
-    responses = iter([build_staged_plan_skeleton(), *staged_days, {}])
+    responses = iter([build_staged_plan_skeleton(), *staged_days, {}, {}, {}])
 
     def fake_call(_config, system_prompt, user_prompt, max_tokens=None, provider=None):
         return next(responses)
